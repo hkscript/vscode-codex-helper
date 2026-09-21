@@ -310,9 +310,11 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         provider.refresh();
       },
-      renameSession: (node) => {
+      renameSession: async (node) => {
         const sessionId = sessionIdOf(node);
-        return sessionId ? renameSession({ sessionId, label: labelOf(node) }) : undefined;
+        if (!sessionId) return;
+        // 新名字只写回了 Codex（本地 `threads` 还是旧的），刷一次列表才会显示出来
+        if (await renameSession({ sessionId, label: labelOf(node) })) provider.refresh();
       },
       newSession,
       pinSession: async (node) => {

@@ -85,11 +85,20 @@ describe('commands', () => {
     expect(renames).toEqual([{ threadId: 't1', name: '价格排查' }]);
   });
 
+  // REQ: 会话重命名 / Scenario: 重命名成功后刷新列表
+  it('returns_true_after_a_successful_rename', async () => {
+    const { deps } = makeDeps({ answer: '价格排查' });
+    const renameSession = createRenameSessionCommand(deps);
+
+    // 返回值是调用方刷新列表的唯一依据：写回成功才算「做成了」
+    await expect(renameSession({ sessionId: 't1', label: '旧名字' })).resolves.toBe(true);
+  });
+
   it('skips_rpc_when_rename_cancelled', async () => {
     const { deps, showErrorMessage } = makeDeps({ answer: undefined });
     const renameSession = createRenameSessionCommand(deps);
 
-    await renameSession({ sessionId: 't1', label: '旧名字' });
+    await expect(renameSession({ sessionId: 't1', label: '旧名字' })).resolves.toBe(false);
 
     expect(deps.threadApi.setThreadName).not.toHaveBeenCalled();
     expect(showErrorMessage).not.toHaveBeenCalled();
@@ -102,11 +111,22 @@ describe('commands', () => {
     });
     const renameSession = createRenameSessionCommand(deps);
 
-    // 命令本身不能把异常抛回 VS Code 命令层，否则用户只看到静默失败
-    await expect(renameSession({ sessionId: 't1', label: '旧名字' })).resolves.toBeUndefined();
+    // 命令本身不能把异常抛回 VS Code 命令层，否则用户只看到静默失败；
+    // 失败返回 false，调用方据此不做任何列表刷新
+    await expect(renameSession({ sessionId: 't1', label: '旧名字' })).resolves.toBe(false);
 
     expect(showErrorMessage).toHaveBeenCalledTimes(1);
     expect(String(showErrorMessage.mock.calls[0]![0])).toContain('rpc error');
+  });
+
+  it('returns_false_when_rename_has_no_session', async () => {
+    const { deps, showInputBox } = makeDeps({ answer: '价格排查' });
+    const renameSession = createRenameSessionCommand(deps);
+
+    await expect(renameSession(undefined)).resolves.toBe(false);
+    await expect(renameSession({ label: '旧名字' })).resolves.toBe(false);
+
+    expect(showInputBox).not.toHaveBeenCalled();
   });
 
   // REQ: 新建会话 / Scenario: 每次执行都打开带上本次调用独有 query 的新面板 URI

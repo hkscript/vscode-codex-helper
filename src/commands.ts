@@ -40,13 +40,17 @@ function reasonOf(error: unknown): string {
 /**
  * Rename writes back to Codex through `thread/name/set`, so the new name shows
  * up in the TUI and the Codex plugin as well — it is not a private alias (D6).
+ *
+ * 与归档三件套一样用返回值报告「真的做成了」：只有 `true` 才允许调用方刷新列表。
+ * 取消（Esc / 空名字）与失败都返回 `false` —— 新名字只在服务端，本地缓存里没有，
+ * 假成功刷新只会让用户看到旧标题还没变。
  */
 export function createRenameSessionCommand(
   deps: RenameSessionCommandDeps,
-): (node: RenameSessionNode | undefined) => Promise<void> {
-  return async function renameSession(node: RenameSessionNode | undefined): Promise<void> {
+): (node: RenameSessionNode | undefined) => Promise<boolean> {
+  return async function renameSession(node: RenameSessionNode | undefined): Promise<boolean> {
     const sessionId = node?.sessionId;
-    if (!sessionId) return;
+    if (!sessionId) return false;
 
     const answer = await deps.showInputBox({
       value: node.label,
@@ -54,16 +58,18 @@ export function createRenameSessionCommand(
       placeHolder: node.label,
     });
     // 用户取消（Esc）时什么都不做，绝不发请求
-    if (answer === undefined) return;
+    if (answer === undefined) return false;
 
     const name = answer.trim();
     // 空名字会毁掉会话标题，直接当作取消处理
-    if (name.length === 0) return;
+    if (name.length === 0) return false;
 
     try {
       await deps.threadApi.setThreadName(sessionId, name);
+      return true;
     } catch (error) {
       deps.showErrorMessage(`重命名会话失败：${reasonOf(error)}`);
+      return false;
     }
   };
 }

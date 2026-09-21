@@ -157,7 +157,7 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 
 ### Requirement: 会话重命名
 
-插件 SHALL 支持重命名会话，并通过 `thread/name/set` 把新名字写回 Codex。
+插件 SHALL 支持重命名会话，并通过 `thread/name/set` 把新名字写回 Codex。重命名命令 SHALL 用返回值报告这次写回是否成功（`true` / `false`），调用方 SHALL 只在成功时刷新会话列表。
 
 #### Scenario: 输入新名字后写回 Codex
 
@@ -165,17 +165,23 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 - **WHEN** 执行重命名命令
 - **THEN** 发送 `thread/name/set`，参数为 `{ threadId: 't1', name: '价格排查' }`
 
+#### Scenario: 重命名成功后刷新列表
+
+- **GIVEN** 会话 id 为 `t1`，`thread/name/set` 成功返回
+- **WHEN** 执行重命名命令
+- **THEN** 命令返回 `true`，且会话列表被刷新一次（新名字只在服务端，不刷新就仍是旧标题）
+
 #### Scenario: 用户取消输入时不发请求
 
 - **GIVEN** 用户在输入框中按下取消（返回 `undefined`）
 - **WHEN** 执行重命名命令
-- **THEN** 不发送任何 `thread/name/set` 请求
+- **THEN** 不发送任何 `thread/name/set` 请求，命令返回 `false`，且不刷新会话列表
 
 #### Scenario: 重命名失败时提示错误
 
 - **GIVEN** `thread/name/set` 返回 error
 - **WHEN** 执行重命名命令
-- **THEN** 向用户展示错误消息，且不修改本地列表中的名称
+- **THEN** 向用户展示错误消息，命令返回 `false`，且不刷新会话列表（不修改本地列表中的名称）
 
 ### Requirement: 会话置顶
 

@@ -112,6 +112,13 @@ function makeTab(conversationId: string) {
   };
 }
 
+/** 让这一次 `showInputBox` 调用返回给定名字（once 语义，不泄漏到别的用例）。 */
+function answerRenameWith(name: string): void {
+  (
+    vscode.window.showInputBox as unknown as { mockResolvedValueOnce(value: unknown): void }
+  ).mockResolvedValueOnce(name);
+}
+
 describe('extension', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -183,6 +190,47 @@ describe('extension', () => {
     const closed = (vscode.window.tabGroups.close as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0];
     expect(closed).toEqual([doomed]);
     expect(refreshes).toBe(1);
+  });
+
+  // REQ: 会话重命名 / Scenario: 重命名成功后刷新列表（接线层）
+  it('rename_refreshes_the_list_after_a_successful_write_back', async () => {
+    interceptTreeView();
+    activate(makeContext() as never);
+    answerRenameWith('价格排查');
+
+    await runHandler(activatedHandler('codexHelper.renameSession'), {
+      sessionId: 't1',
+      label: '旧名字',
+    });
+
+    // 新名字只在服务端：不刷新就一直是旧标题，用户得手动点刷新
+    expect(refreshes).toBe(1);
+  });
+
+  // REQ: 会话重命名 / Scenario: 重命名失败时提示错误（失败不得刷新，否则是假成功）
+  it('rename_failure_does_not_refresh_the_list', async () => {
+    interceptTreeView();
+    activate(makeContext() as never);
+    answerRenameWith('价格排查');
+
+    await runHandler(
+      activatedHandler('codexHelper.renameSession'),
+      { sessionId: 't1', label: '旧名字' },
+      'fail',
+    );
+
+    expect(refreshes).toBe(0);
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(1);
+  });
+
+  // REQ: 会话重命名 / Scenario: 用户取消输入时不发请求（取消不刷新）
+  it('rename_cancel_does_not_refresh_the_list', async () => {
+    interceptTreeView();
+    activate(makeContext() as never);
+
+    await activatedHandler('codexHelper.renameSession')({ sessionId: 't1', label: '旧名字' });
+
+    expect(refreshes).toBe(0);
   });
 
   // INV-004: 三条命令都不弹确认，且只有删除会关标签 / 只有成功才做清理
