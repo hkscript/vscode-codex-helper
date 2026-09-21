@@ -106,7 +106,9 @@ pnpm typecheck   # tsc --noEmit
 ```bash
 pnpm version patch        # 或 minor / major：改 package.json 并打 tag
 pnpm build
-npx @vscode/vsce package  # 产物 vscode-codex-helper-<version>.vsix
+# pnpm 10+ 默认拦下依赖的 postinstall，@vscode/vsce-sign 需要显式放行
+pnpm dlx --allow-build=@vscode/vsce-sign @vscode/vsce package  # 产物 vscode-codex-helper-<version>.vsix
+code --install-extension vscode-codex-helper-<version>.vsix    # 装到当前窗口所在的一端
 ```
 
 ## 许可
