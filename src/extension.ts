@@ -16,7 +16,7 @@ import {
 } from './commands';
 import { createSessionOpener } from './session/opener';
 import { createRowOpener } from './session/rowOpener';
-import { scanCodexTabs } from './session/openTabs';
+import { scanCodexTabs, selectTabsForConversation } from './session/openTabs';
 import { createPinStore } from './session/pinStore';
 import { scanHeldRollouts } from './session/processScan';
 import { createRunningTracker, type RunningTracker } from './session/runningTracker';
@@ -91,6 +91,19 @@ export function activate(context: vscode.ExtensionContext): void {
           tabs: group.tabs.map((tab) => ({ label: tab.label, input: tab.input })),
         })),
       },
+      { isCustomInput: (input: unknown) => input instanceof vscode.TabInputCustom },
+    );
+  }
+
+  /** 删除会话后要关掉的标签（只关会话 id 完全匹配的那些），交给 tabGroups.close。 */
+  function tabsOfConversation(conversationId: string) {
+    return selectTabsForConversation(
+      {
+        all: vscode.window.tabGroups.all.map((group) => ({
+          tabs: group.tabs.map((tab) => ({ label: tab.label, input: tab.input, handle: tab })),
+        })),
+      },
+      conversationId,
       { isCustomInput: (input: unknown) => input instanceof vscode.TabInputCustom },
     );
   }
@@ -224,8 +237,14 @@ export function activate(context: vscode.ExtensionContext): void {
         const id = sessionIdOf(node);
         if (!id) return;
         if (!(await deleteSession({ sessionId: id }))) return;
-        // 删除不可逆：清掉置顶状态（否则 globalState 里留着陈旧 id），再刷新
+        // 删除不可逆：清掉置顶状态（否则 globalState 里留着陈旧 id）
         await pinStore.unpin(id);
+        // 再关掉显示这个会话的标签：跨进程删除不会通知 Codex 那侧的 webview，
+        // 留着标签会让它继续 read/resume 一个已删除的会话（design D46）。
+        const doomed = tabsOfConversation(id);
+        if (doomed.length > 0) {
+          await vscode.window.tabGroups.close(doomed as never);
+        }
         provider.refresh();
       },
       renameSession: (node) => {

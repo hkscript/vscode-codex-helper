@@ -248,9 +248,15 @@ export const window = {
   showInputBox: vi.fn(async () => undefined as string | undefined),
   showErrorMessage: vi.fn(() => undefined),
   showInformationMessage: vi.fn(() => undefined),
+  // 归档/删除都不弹确认框：这条 mock 存在只为了断言「从来没有被调用过」
+  showWarningMessage: vi.fn(() => undefined),
   createTreeView: vi.fn(() => ({ dispose: vi.fn() })),
   registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
-  tabGroups: { all: [] as unknown[], onDidChangeTabs: vi.fn(() => ({ dispose: vi.fn() })) },
+  tabGroups: {
+    all: [] as unknown[],
+    onDidChangeTabs: vi.fn(() => ({ dispose: vi.fn() })),
+    close: vi.fn(async () => true),
+  },
 };
 
 export const commands = {
