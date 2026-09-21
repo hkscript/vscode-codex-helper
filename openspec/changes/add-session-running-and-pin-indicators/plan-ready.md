@@ -63,10 +63,11 @@
 
 ### Task 5: 树条目的 id、图标、描述与 contextValue
 - 目标：节点 id 加分组段、running 用 `loading~spin` 图标、pinned 在 description 加 `📌`、contextValue 改为 pinned 优先
-- Test cases: T-025, T-026, T-027, T-028
+- Test cases: T-025, T-026, T-028
 - Files: `src/ui/treeProvider.ts`, `test/unit/treeProvider.test.ts`, `openspec/changes/add-session-running-and-pin-indicators/test-plan.md`, `openspec/changes/add-session-running-and-pin-indicators/plan-ready.md`
 - 改动文件：`src/ui/treeProvider.ts` [Verified]、`test/unit/treeProvider.test.ts` [Verified]
-- 覆盖场景：T-025, T-026, T-027, T-028
+- 覆盖场景：T-025, T-026, T-028
+- ⚠️ 2026-09-21 amend：T-027 原由本 task 绑定，其断言在 Task 8 中被重写（description 内容由 preview 改为目录末级名），绑定已移交 Task 8；本 task 产出的 `📌` 前缀逻辑本身不变
 - 测试先行：先写 `test/unit/treeProvider.test.ts::same_session_gets_distinct_node_ids_per_group`
 - 验证方式：`pnpm test -- treeProvider` 先红后绿；人工核对 `package.json` 的 pin/unpin `when` 表达式在新 contextValue 下语义仍正确（D22，不改文件）
 - 确定性：[Verified]（依赖 Task 4 产出的双行分组）
@@ -94,6 +95,18 @@
 - 确定性：[Verified]（`extension.ts:80-94` 的 `load`、`:120-171` 的 subscriptions、`:180-185` 的 `deactivate`、`package.json:130-152` 的 configuration 均已确认）
 - [x] 接线、自激防护与配置项
 
+### Task 8（2026-09-21 amend）: 条目描述由首条消息改为会话目录
+- 目标：`toItemNode` 的 `description` 内容从 `session.preview` 改为 `session.cwd` 的末级目录名；新增导出纯函数 `cwdBasename`
+- Test cases: T-027, T-030, T-031, INV-003
+- Files: `src/ui/treeProvider.ts`, `test/unit/treeProvider.test.ts`, `openspec/changes/add-session-running-and-pin-indicators/test-plan.md`, `openspec/changes/add-session-running-and-pin-indicators/plan-ready.md`
+- 改动文件：`src/ui/treeProvider.ts` [Verified]（`:84` 的 `preview` 常量与 `:86` 的 `description` 组装）、`test/unit/treeProvider.test.ts` [Verified]
+- 覆盖场景：T-027（重写）, T-030, T-031, INV-003
+- 测试先行：先重写 `pinned_session_description_starts_with_pin_marker`——它的 `toContain('钉住的预览')` / `toBe('普通的预览')` 两条断言与新行为冲突，改为断言 `📌 ` 之后是目录末级名；再写 T-030 / T-031；INV-003 最后写，遍历 design §6.3 的 8 格并带遍历计数护栏
+- 验证方式：`npx vitest run test/unit/treeProvider.test.ts` 先红后绿；`pnpm typecheck`、`pnpm build` 通过
+- ⚠️ T-027 的 `🔴 RED` 凭据已在 amend 中清除——断言重写后必须重新走一次 Step 2（见到红）才能标 PASS
+- 确定性：[Verified]（`SessionItem.cwd` 已存在于 `src/codex/types.ts:76`，由 `src/session/sessionStore.ts:76` 填充，无需改类型或 API）
+- [ ] 条目描述由首条消息改为会话目录
+
 ## 依赖顺序
 
 ```
@@ -104,7 +117,17 @@ Task 1（类型 + API）
 Task 4（分组，用到 SessionItem.running）
    └─► Task 5（条目呈现，依赖双行分组）
 Task 3 + Task 2 ─► Task 6（追踪器）─► Task 7（接线）
+
+Task 5（条目呈现）─► Task 8（描述改为目录，amend 追加）
 ```
+
+## Amendments
+
+### 2026-09-21 — 条目描述由首条消息改为会话目录
+
+- 新增 Task 8；Task 1–7 已完成，checkbox 保持 `[x]`
+- Task 5 的产出被 Task 8 部分改写（只改 `description` 的内容，节点 id / 图标 / contextValue 不动），其 T-025 / T-026 / T-028 三条测试不受影响
+- 详细影响分析见 `test-plan.md` 的 `## Amendments`
 
 ## 人工验收（非自动化，build 完成后在真实窗口确认）
 

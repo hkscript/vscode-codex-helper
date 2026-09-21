@@ -41,6 +41,8 @@
 | **D23** | 运行集合变化时才触发树刷新 | `refresh → load → update → refresh` 会自激；只在集合真变化时回调，保证一轮收敛 |
 | **D24** | 单个会话的回合查询失败按「非运行」处理，不冒泡 | 运行标识是增强信息，不能让一次 RPC 失败把整棵树变成错误节点（与既有「错误可见性」requirement 的边界：那条管的是**列表加载**失败） |
 | **D25** | 重算带代际号（generation），迟到的旧结果直接丢弃 | 一次重算要等 N 个 `thread/turns/list` 往返，期间完全可能被新的文件事件再次触发；没有代际号时先发后到的旧结果会把新状态覆盖回去，表现为「跑完了还转圈 / 刚开跑却不转」 |
+| **D26**（2026-09-21 amend） | `description` 显示 `cwd` 的**末级目录名**，不显示 `preview`、不显示完整路径 | 侧边栏窄，`description` 从右侧截断，完整路径会把最有辨识度的尾部切掉，末级目录名恰好是尾部。`preview` 对已命名会话是冗余信息（名字才是身份），对未命名会话则本来就在左侧当标题用，不会丢失 |
+| **D27**（2026-09-21 amend） | `cwd` 为 `null` 时 `description` 不含目录部分；置顶时恰为 `📌` | 没有的信息不编。这一列语义因此单一：有字就是目录。`` `📌 ${base}` `` 在 base 为空时必须 trim 掉尾随空格，否则渲染出 `📌 ` 带一个看不见的尾巴 |
 
 ## 4. 架构
 
@@ -90,6 +92,14 @@ extension.activate()
 链路末端：`TreeItem.id`（折叠/选中状态记忆）与右键菜单可见性。
 `[Verified]` 现状：`:84` `id: 'session:${session.id}'`；`:77-81` contextValue 优先级 open > pinned；`:147` `iconPath = new ThemeIcon(session.open ? 'window' : 'comment-discussion')`；`:86` description 在 `preview === label` 时为 `undefined`。
 改法：id 加分组段（D20）；contextValue 改为 pinned > open（D22）；running 时图标换 `loading~spin`（D21）；description 前缀 `📌`（D21）。
+
+**2026-09-21 amend 追加**：description 的**内容**从 `session.preview` 改为 `session.cwd` 的末级目录名（D26/D27）。
+
+- 目标：`src/ui/treeProvider.ts::toItemNode`（同一个改动点，本次改的是它计算 `description` 的那两行）
+- 目标：`src/ui/treeProvider.ts::cwdBasename`（新增的导出纯函数，同文件）
+- 并行路径：无 —— `[Verified]` `grep -n "description" src/` 只命中 `treeProvider.ts` 的 `:84/:86/:93/:131/:145`，其中 `:131` 是分组节点的条数（与会话条目无关，不随改）
+- 数据来源已存在：`[Verified]` `SessionItem.cwd`（`src/codex/types.ts:76`，`string | null`）由 `src/session/sessionStore.ts:76` 的 `thread?.cwd ?? null` 填充；`Thread.cwd` 是必填 `string`（`types.ts:37`），因此 `cwd` 为 `null` 当且仅当该行来自「服务端查不到的已打开标签」
+- 末级目录名的取法必须同时吃下 `/` 与 `\` 分隔符、忽略尾随分隔符；`/`（根目录）与空串都归入「没有目录部分」
 `[Verified]` 菜单无需改：`package.json:119-127` 的 pin/unpin `when` 表达式在新优先级下语义仍正确。
 
 ### 改动点 3：新增回合列表 API
@@ -195,6 +205,23 @@ extension.activate()
 | 8 | 否 | 否 | 否 | 无 | 无 | 无 | INV-002 |
 
 空白格：无。第 1 行是本次语义翻转（原为「置顶组无」），其余行必须保持原行为——这正是 `INV-002` 要钉死的。取消置顶后的行间迁移（第 1 行 → 第 3 行）由 `T-023` 单独覆盖，`running` 标记的透传由 `T-024` 覆盖。
+
+### 6.3 条目描述（2026-09-21 amend 新增，D26/D27）
+
+维度：`cwd` 形态 {正常路径, 带尾随分隔符, 根目录 `/`, `null`} × `pinned` {是, 否}
+
+| # | cwd | pinned | 预期 description | 覆盖 T-id |
+|---|-----|--------|------------------|-----------|
+| 1 | `/home/hk/github/vscode-codex-helper` | 否 | `vscode-codex-helper` | T-030 |
+| 2 | `/home/hk/github/vscode-codex-helper` | 是 | `📌 vscode-codex-helper` | T-027 |
+| 3 | `/home/hk/github/vscode-codex-helper/` | 否 | `vscode-codex-helper`（尾随分隔符不产生空名） | INV-003 |
+| 4 | `/home/hk/github/vscode-codex-helper/` | 是 | `📌 vscode-codex-helper` | INV-003 |
+| 5 | `/` | 否 | 空 | INV-003 |
+| 6 | `/` | 是 | `📌`（不带尾随空格） | INV-003 |
+| 7 | `null` | 否 | 空 | T-031 |
+| 8 | `null` | 是 | `📌`（不带尾随空格） | T-031 |
+
+空白格：无。第 5–8 行是本次最容易写错的一组——`` `📌 ${base ?? ''}` `` 在 `base` 为空时会留下一个看不见的尾随空格，`INV-003` 按本表同一套维度叉乘，逐格与独立推导的期望值比对，并断言遍历计数。
 
 ## 7. 风险与缓解
 

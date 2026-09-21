@@ -1814,3 +1814,194 @@ git commit -m "feat(extension): wire the running tracker and add its settings"
 1. 打开一个 Codex 会话并发起一条耗时回合 → 侧边栏该条目出现运行图标；回合结束后图标恢复。
 2. 置顶一个会话再打开它 → 「已打开」与「置顶」两组各有一行，两行都带 `📌`，右键都给「取消置顶」。
 3. 取消置顶 → 「置顶」组那行消失，「已打开」组那行保留且 `📌` 消失。
+
+---
+
+## Amendment 2026-09-21: 条目描述由首条消息改为会话目录
+
+Task 1–7 已完成并 commit。以下为 amend 追加的 Task 8。规格依据：design §6.3 + D26/D27，spec.md 的 `Scenario: 条目描述显示会话所在目录的末级名称` / `Scenario: 没有目录信息的会话不显示描述`。
+
+### Task 8: description 从 preview 改为 cwd 末级目录名
+
+**Files:**
+- Modify: `src/ui/treeProvider.ts`（`toItemNode` 的 `preview` 常量与 `description` 组装，约 :84-86）
+- Test: `test/unit/treeProvider.test.ts`（重写 T-027，新增 T-030 / T-031 / INV-003）
+
+**Interfaces:**
+- Consumes: `SessionItem.cwd`（`string | null`，已存在）
+- Produces: `cwdBasename(cwd: string | null | undefined): string | undefined`（从 `treeProvider.ts` 导出，供 INV-003 直接驱动边界输入）
+
+**约定：** `cwdBasename` 同时吃 `/` 与 `\` 分隔符、忽略尾随分隔符；根目录与空串返回 `undefined`（等同「没有目录部分」）。`description` = `pinned ? \`📌 ${base ?? ''}\`.trimEnd() : base`。
+
+- [ ] **Step 1: 重写 T-027 + 写 T-030 / T-031**
+
+`pinned_session_description_starts_with_pin_marker` 改为：
+
+```ts
+  it('pinned_session_description_starts_with_pin_marker', async () => {
+    const groups = buildSessionGroups({
+      threads: [
+        makeThread({ id: 'pin-1', name: '钉住的', preview: '钉住的预览', cwd: '/home/hk/meicai/order' }),
+        makeThread({ id: 'plain', name: '普通的', preview: '普通的预览', cwd: '/home/hk/github/codex-cli' }),
+      ],
+      openTabs: [],
+      pinnedIds: ['pin-1'],
+    });
+
+    const pinned = await sessionNodes(groups, 'pinned');
+    const history = await sessionNodes(groups, 'history');
+
+    // 图标位被运行状态占着，置顶只能落在 description 上（D21）
+    expect(pinned.nodes[0]!.description).toBe('📌 order');
+    expect(pinned.provider.getTreeItem(pinned.nodes[0]!).description).toBe('📌 order');
+    // 没置顶的条目不能平白多出一个图钉，但目录照旧显示
+    expect(history.nodes[0]!.description).toBe('codex-cli');
+  });
+```
+
+新增两条：
+
+```ts
+  it('description_shows_cwd_basename', async () => {
+    const groups = buildSessionGroups({
+      threads: [makeThread({ id: 't1', name: '价格排查', preview: '帮我看看这个报价', cwd: '/home/hk/meicai/price-research' })],
+      openTabs: [],
+      pinnedIds: [],
+    });
+
+    const { nodes } = await sessionNodes(groups, 'history');
+
+    // 侧边栏窄，description 从右侧截断——完整路径会把最有辨识度的尾部切掉（D26）
+    expect(nodes[0]!.description).toBe('price-research');
+    // 首条消息不再出现在右侧
+    expect(String(nodes[0]!.description)).not.toContain('帮我看看这个报价');
+  });
+
+  it('session_without_cwd_has_empty_description', async () => {
+    // 已打开的标签对应的会话不在 thread/list 里 ⇒ cwd 为 null
+    const groups = buildSessionGroups({
+      threads: [],
+      openTabs: [makeOpenTab('t8', '新会话'), makeOpenTab('t9', '钉住的新会话')],
+      pinnedIds: ['t9'],
+    });
+
+    const { nodes } = await sessionNodes(groups, 'open');
+    const descOf = (id: string) => nodes.find((node) => node.id.endsWith(id))!.description;
+
+    expect(descOf('t8')).toBeUndefined();
+    // 没有目录时置顶前缀不能拖着一个看不见的尾随空格（D27）
+    expect(descOf('t9')).toBe('📌');
+  });
+```
+
+INV-003（最后写）：
+
+```ts
+  // INV-003: design §6.3 的 (cwd 形态 × pinned) 8 格全组合
+  it('description_matrix_holds_for_all_cwd_and_pinned_combinations', () => {
+    const cwds: Array<[string | null, string | undefined]> = [
+      ['/home/hk/github/vscode-codex-helper', 'vscode-codex-helper'],
+      ['/home/hk/github/vscode-codex-helper/', 'vscode-codex-helper'],
+      ['/', undefined],
+      [null, undefined],
+    ];
+    let withDir = 0;
+    let withoutDir = 0;
+
+    for (const [cwd, expectedBase] of cwds) {
+      // 先单独钉住取名函数本身，再钉住它被组装进 description 的结果
+      expect(cwdBasename(cwd), `cwdBasename(${cwd})`).toBe(expectedBase);
+
+      for (const pinned of [true, false]) {
+        const groups = buildSessionGroups({
+          threads: [makeThread({ id: 't1', name: '目标会话', cwd: cwd ?? undefined })],
+          openTabs: cwd === null ? [makeOpenTab('t1', '目标会话')] : [],
+          pinnedIds: pinned ? ['t1'] : [],
+        });
+        const row = groups.flatMap((group) => group.sessions).find((s) => s.id === 't1')!;
+        const description = pinned
+          ? `📌 ${cwdBasename(row.cwd) ?? ''}`.trimEnd()
+          : cwdBasename(row.cwd);
+
+        // 独立推导的期望值：不复用被测实现的组装分支
+        const expected = pinned
+          ? expectedBase === undefined
+            ? '📌'
+            : `📌 ${expectedBase}`
+          : expectedBase;
+
+        expect(description, `cwd=${cwd} pinned=${pinned}`).toBe(expected);
+        // 尾随空格在 UI 里看不见，只能靠完整相等断言钉死
+        expect(String(description ?? ''), `cwd=${cwd} pinned=${pinned} 尾随空白`).toBe(
+          String(description ?? '').trimEnd(),
+        );
+
+        if (expectedBase === undefined) withoutDir += 1;
+        else withDir += 1;
+      }
+    }
+
+    // 反空转护栏：4 种 cwd 形态 × 2 种置顶状态 = 8 格，两类结论都要出现
+    expect(withDir + withoutDir).toBe(8);
+    expect(withDir).toBe(4);
+    expect(withoutDir).toBe(4);
+  });
+```
+
+- [ ] **Step 2: 运行测试确认 FAIL（红）**
+
+Run: `npx vitest run test/unit/treeProvider.test.ts`
+
+先只导出一个返回 `undefined` 的 `cwdBasename` 空壳，确认四条红在断言上（T-027 报 `expected '📌 钉住的预览' to be '📌 order'`）。贴出输出，在 `test-plan.md` 的 T-027 / T-030 / T-031 / INV-003 行尾各追加 ` 🔴 RED`（T-027 是重走，它的旧凭据已在 amend 中清除）。
+
+INV-003 此时必须在**多个**格子上报失败——只红一格说明矩阵没跑满。
+
+- [ ] **Step 3: 写最小实现**
+
+`src/ui/treeProvider.ts`：
+
+```ts
+/**
+ * Last segment of a session's working directory.
+ *
+ * The sidebar is narrow and `description` truncates from the right, so a full
+ * path loses exactly the part that tells sessions apart (design D26). Accepts
+ * both separators and ignores a trailing one; the root directory and the empty
+ * string have no meaningful last segment and yield `undefined` (D27).
+ */
+export function cwdBasename(cwd: string | null | undefined): string | undefined {
+  if (!cwd) return undefined;
+  const segments = cwd.split(/[/\\]+/).filter((segment) => segment.length > 0);
+  return segments.at(-1);
+}
+```
+
+`toItemNode` 的两行改为：
+
+```ts
+    const base = cwdBasename(session.cwd);
+    // 图标位归运行状态，置顶只能占 description 前缀（D21）。
+    // 没有目录时 trimEnd 掉 `📌 ` 的尾随空格（D27）。
+    const description = session.pinned ? `📌 ${base ?? ''}`.trimEnd() : base;
+```
+
+- [ ] **Step 4: 运行测试确认 PASS（绿）**
+
+Run: `npx vitest run test/unit/treeProvider.test.ts` → 10 passed
+Run: `pnpm test` → 全量绿；`pnpm typecheck`、`pnpm build` 通过
+
+- [ ] **Step 5: 更新状态文件**
+
+`test-plan.md` 的 T-027 / T-030 / T-031 / INV-003 行尾各追加 ` ✅ PASS`（T-027 同时清掉 `⚠️ 待更新` 标记）；`plan-ready.md` 的 Task 8 checkbox 改 `[x]`。
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/ui/treeProvider.ts test/unit/treeProvider.test.ts openspec/changes/add-session-running-and-pin-indicators/
+git commit -m "feat(ui): show the session directory instead of its first message"
+```
+
+## 人工验收补充（amend 追加）
+
+4. 侧边栏条目右侧显示的是会话所在目录的末级目录名；置顶的条目为 `📌 <目录名>`。
+5. 打开一个服务端列表里没有的会话（新建标签）→ 该行右侧为空；把它置顶 → 右侧恰为 `📌`。

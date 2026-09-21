@@ -36,16 +36,20 @@ T-023: `test/unit/sessionStore.test.ts::unpinning_removes_pinned_row_but_keeps_o
 T-024: `test/unit/sessionStore.test.ts::marks_sessions_present_in_running_set` 🔴 RED ✅ PASS
 T-025: `test/unit/treeProvider.test.ts::same_session_gets_distinct_node_ids_per_group` 🔴 RED ✅ PASS
 T-026: `test/unit/treeProvider.test.ts::running_session_uses_spinner_icon` 🔴 RED ✅ PASS
-T-027: `test/unit/treeProvider.test.ts::pinned_session_description_starts_with_pin_marker` 🔴 RED ✅ PASS
+T-027: `test/unit/treeProvider.test.ts::pinned_session_description_starts_with_pin_marker` ⚠️ 待更新: description 内容由 preview 改为目录末级名，断言需重写后重走 RED
 T-028: `test/unit/treeProvider.test.ts::open_and_pinned_item_context_value_is_pinned` 🔴 RED ✅ PASS
 T-029: `test/unit/runningTracker.test.ts::stale_recompute_results_are_discarded` 🔴 RED ✅ PASS
+T-030: `test/unit/treeProvider.test.ts::description_shows_cwd_basename`
+T-031: `test/unit/treeProvider.test.ts::session_without_cwd_has_empty_description`
 INV-001: `test/unit/runningState.test.ts::running_iff_no_terminal_record_and_owner_alive` covers T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010 🔴 RED ✅ PASS
 INV-002: `test/unit/sessionStore.test.ts::group_membership_matrix_holds_for_all_combinations` covers T-022, T-023 🔴 RED ✅ PASS
+INV-003: `test/unit/treeProvider.test.ts::description_matrix_holds_for_all_cwd_and_pinned_combinations` covers T-027, T-030, T-031
 
 ## 不变量说明
 
 - **INV-001** 对 design §6.1 的四个维度（最新回合状态 × `completedAt` × 归属存活 × 平台是否可探测）做全组合遍历，每格用**独立推导**的谓词复核 `computeRunningIds` 的输出，并在末尾断言遍历计数（running 格数 / 非 running 格数），防止循环被写成永不进循环的假绿（沿用 archive lessons 的「组合不变量 + 反空转护栏」模式）。
 - **INV-002** 对 design §6.2 的 (hasOpenTab × pinned × inThreadList) 8 格做全组合遍历，逐格断言三个分组的成员关系，并断言「历史组与另两组互斥」这条仍然成立的不变量。它取代既有的 `every_session_appears_in_exactly_one_group`——那条断言的「恰好出现一次」正是本次要推翻的语义。
+- **INV-003**（2026-09-21 amend）对 design §6.3 的 (cwd 形态 × pinned) 8 格做全组合遍历，逐格用独立推导的期望字符串复核 `description`，并断言遍历计数。它专门盯住 `` `📌 ${base}` `` 在 base 为空时的尾随空格——这类缺陷肉眼不可见，只能靠**完整相等**断言（而不是 `startsWith` / `toContain`）钉死，所以矩阵里每一格都比对完整值。
 
 ## 既有测试的处置
 
@@ -89,13 +93,35 @@ INV-002: `test/unit/sessionStore.test.ts::group_membership_matrix_holds_for_all_
 | T-027 | 树视图组织、状态标识与过滤 | 置顶的条目显示置顶标识 | 单元 |
 | T-028 | 树视图组织、状态标识与过滤 | 已打开且已置顶的条目右键菜单给出取消置顶 | 单元 |
 | T-029 | 运行状态自动刷新 | 重入的重算只采用最新一轮结果 | 单元 |
+| T-030 | 树视图组织、状态标识与过滤 | 条目描述显示会话所在目录的末级名称 | 单元 |
+| T-031 | 树视图组织、状态标识与过滤 | 没有目录信息的会话不显示描述 | 单元 |
 | INV-001 | 会话运行状态识别 | design §6.1 全组合 | 不变量 |
 | INV-002 | 树视图组织、状态标识与过滤 | design §6.2 全组合 | 不变量 |
+| INV-003 | 树视图组织、状态标识与过滤 | design §6.3 全组合 | 不变量 |
 
 **既有覆盖（本次不新增用例，靠现有回归守住）**：`三组分别归位`、`空分组不渲染分组节点`、`关键词过滤只保留匹配项`、`无名会话用首条消息作为显示标题`、`置顶的会话已从服务端消失时不显示幽灵条目`、`已打开但不在服务端列表中的会话仍然显示`、`已打开与置顶分组默认展开`、`会话置顶` 的三个既有 scenario——它们的行为在本变更中不变，已由 `test/unit/sessionStore.test.ts`、`test/unit/treeProvider.test.ts`、`test/unit/pinStore.test.ts` 的现存用例覆盖。
 
 ## 统计
 
-- 本变更 scenario 总数：39（新增/变更 29，行为不变沿用既有覆盖 10）
-- 新增测试用例：29 个 T + 2 个 INV
+- 本变更 scenario 总数：41（新增/变更 31，行为不变沿用既有覆盖 10）
+- 新增测试用例：31 个 T + 3 个 INV
 - 涉及测试文件：6（新增 3：`runningState` / `processScan` / `runningTracker`；改动 3：`threadApi` / `sessionStore` / `treeProvider`）
+
+## Amendments
+
+### 2026-09-21 — 条目描述由首条消息改为会话目录
+
+影响分析（改文档前完成，已向用户确认）：
+
+| 编号 | 所属 Requirement | 影响 | 说明 |
+|------|-----------------|------|------|
+| T-027 | 树视图组织、状态标识与过滤 | 🔄 需修改 | 断言体引用 `preview`（`toContain('钉住的预览')`、`toBe('普通的预览')`），与新行为直接冲突。已清掉 `🔴 RED ✅ PASS`——RED 证明的是旧预期行为下的失败能力，预期一改凭据即作废，须回 build 重走 Step 2 |
+| T-025 / T-026 / T-028 | 树视图组织、状态标识与过滤 | 无影响 | 分别断言节点 id / 图标 / contextValue，不碰 `description` |
+| T-001~T-024、T-029、INV-001、INV-002 | 全部 | 无影响 | `description` 只在 `treeProvider.toItemNode` 产出，其余模块不经手 |
+| T-030 | 树视图组织、状态标识与过滤 | ➕ 新增 | 目录末级名的正向断言 |
+| T-031 | 树视图组织、状态标识与过滤 | ➕ 新增 | `cwd` 为 `null` 时描述为空；置顶时恰为 `📌` |
+| INV-003 | 树视图组织、状态标识与过滤 | ➕ 新增 | design §6.3 的 (cwd 形态 × pinned) 8 格全组合 |
+
+小结：31 条已有用例中 1 条需修改、0 条废弃，新增 3 条（2 个 T + 1 个 INV）。
+
+**为什么要加 INV-003 而不是只加两条 T**：`description` 的组装是 (cwd 形态 × pinned) 的二维组合，而 `` `📌 ${base ?? ''}` `` 在 base 为空时留下的尾随空格**在终端和 UI 里都看不见**。`startsWith('📌')` 这类断言对它完全免疫——它永远为真。只有逐格比对完整字符串才能钉住，所以矩阵里 8 格全部用完整相等断言。

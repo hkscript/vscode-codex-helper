@@ -158,12 +158,9 @@
 - **WHEN** 释放追踪器
 - **THEN** 2 个监听全部被释放，定时器被清除
 
-## ADDED Requirements` 中的 `### Requirement: 树视图组织、状态标识与过滤` 整体替代，未变更的 scenario 已逐条保留在新 requirement 中。
-
-
 ### Requirement: 树视图组织、状态标识与过滤
 
-侧边栏 SHALL 把会话分为「已打开」「置顶」「历史」三组展示，并支持按关键词过滤。一个会话 SHALL 可以同时出现在「已打开」与「置顶」两组中，「历史」组 SHALL 与前两组互斥。同一会话在不同分组中的树节点 SHALL 使用不同的节点 id。条目 SHALL 以图标呈现「运行中」状态、以描述文本呈现「置顶」状态。「已打开」与「置顶」分组 SHALL 默认展开（不折叠），「历史」分组 SHALL 默认折叠。
+侧边栏 SHALL 把会话分为「已打开」「置顶」「历史」三组展示，并支持按关键词过滤。一个会话 SHALL 可以同时出现在「已打开」与「置顶」两组中，「历史」组 SHALL 与前两组互斥。同一会话在不同分组中的树节点 SHALL 使用不同的节点 id。条目 SHALL 以图标呈现「运行中」状态；条目的描述文本 SHALL 呈现该会话所在目录的**末级目录名**，并在会话被置顶时以 `📌` 作为前缀；会话没有目录信息时，描述文本 SHALL 不含目录部分。「已打开」与「置顶」分组 SHALL 默认展开（不折叠），「历史」分组 SHALL 默认折叠。
 
 #### Scenario: 三组分别归位
 
@@ -196,7 +193,22 @@
 - **GIVEN** 会话 `a` 被置顶、会话 `b` 未被置顶
 - **WHEN** 请求两者的 TreeItem
 - **THEN** `a` 的 `description` 以 `📌` 开头
+- **AND** `a` 的 `description` 在 `📌` 之后为 `a` 所在目录的末级目录名
 - **AND** `b` 的 `description` 不含 `📌`
+
+#### Scenario: 条目描述显示会话所在目录的末级名称
+
+- **GIVEN** 会话 `a` 的 `cwd` 为 `/home/hk/github/vscode-codex-helper`
+- **WHEN** 请求 `a` 的 TreeItem
+- **THEN** 其 `description` 为 `vscode-codex-helper`
+- **AND** 其 `description` 不含该会话的首条消息文本
+
+#### Scenario: 没有目录信息的会话不显示描述
+
+- **GIVEN** 有一个已打开的 Codex 标签对应会话 `t8`，且 `thread/list` 返回的列表中不含 `t8`（因此其 `cwd` 为 `null`）
+- **WHEN** 请求 `t8` 的 TreeItem
+- **THEN** 其 `description` 为空
+- **AND** 若 `t8` 同时被置顶，则其 `description` 恰为 `📌`，末尾不带多余空白
 
 #### Scenario: 已打开且已置顶的条目右键菜单给出取消置顶
 
@@ -286,4 +298,4 @@
 
 **Reason**: 分组互斥规则被本次变更推翻——置顶会话被打开后不再从「置顶」组移除，因此「同一会话只出现在优先级最高的一组」这条核心约束及其 `Scenario: 已打开优先于置顶，不重复出现` 不再成立。同时条目新增运行中 / 置顶两种状态标识，requirement 的职责范围随之扩大。
 
-**Migration**: 由下方 `
+**Migration**: 由本变更 `## ADDED Requirements` 中的 `### Requirement: 树视图组织、状态标识与过滤` 整体替代，未变更的 scenario 已逐条保留在新 requirement 中。

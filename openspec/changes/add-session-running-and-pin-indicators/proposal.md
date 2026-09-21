@@ -87,3 +87,24 @@
 - 不做「等待审批 / 等待输入」等细分状态（`ThreadStatus.activeFlags` 里有，但那是线程级状态，跨进程拿不到）。
 - 不改置顶的存储位置（仍在本插件 `globalState`）。
 - 不引入手动置顶排序。
+
+## Amendments
+
+### 2026-09-21 — 条目描述由首条消息改为会话目录
+
+**原因**：用户在 build 完成后的验收中提出，条目右侧的描述文本应显示会话所在目录，而不是会话的首条消息（`thread.preview`）。
+
+**摘要**：
+
+- `TreeItem.description` 的内容从 `thread.preview` 改为 `thread.cwd` 的**末级目录名**（用户在 amend 中确认选择：末级目录名，而非完整路径或 `~` 缩写）。
+- 会话拿不到目录（已打开的标签对应的会话不在 `thread/list` 中，`cwd` 为 `null`）时，描述为空；若该会话同时被置顶，描述恰为 `📌`，不带尾随空白。
+- `📌` 置顶前缀的位置与语义不变。
+
+**BREAKING**：`description` 不再显示 `thread.preview`。原先「有 `name` 的会话在右侧显示首条消息」这一行为被移除。没有 `name` 的会话不受影响——它们的 `preview` 本来就用作左侧标题（`Scenario: 无名会话用首条消息作为显示标题`），仍然可见。
+
+**已知取舍（amend 时向用户说明并确认）**：
+
+1. 开启 `codexHelper.filterByWorkspaceCwd` 时列表只剩当前工作区的会话，所有行的目录名相同，这一列不再提供区分度。该配置默认关闭。
+2. 已命名的会话在树上不再能看到首条消息。判断依据是「既然起了名字，名字就是这个会话的身份」。
+
+**顺带修复**：`specs/codex-session-sidebar/spec.md` 中 `## REMOVED Requirements` 的 `**Migration**` 字段在 spec 阶段被写坏——其文本尾部（以 `` ## ADDED Requirements` `` 开头的一行）被落在了文件第 161 行，夹在 ADDED 段中间伪装成一个二级标题，而文件末尾的 `**Migration**:` 只剩一个未闭合的反引号。`openspec validate --strict` 对此不报错。本次 amend 将该行归位。
