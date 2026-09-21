@@ -24,7 +24,7 @@
       "activitybar": [
         {
           "id": "codexHelper",
-          "title": "Codex 会话",
+          "title": "Codex",
           "icon": "resources/codex.svg"
         }
       ]
@@ -34,8 +34,7 @@
         {
           "id": "codexHelper.sessions",
           "name": "会话",
-          "icon": "resources/codex.svg",
-          "contextualTitle": "Codex 会话"
+          "icon": "resources/codex.svg"
         }
       ]
     },

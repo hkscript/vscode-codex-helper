@@ -13,6 +13,8 @@ const manifest = JSON.parse(
   contributes: {
     commands: Array<{ command: string; icon?: string }>;
     menus: { 'view/item/context': MenuContribution[] };
+    viewsContainers: { activitybar: Array<{ id: string; title: string }> };
+    views: Record<string, Array<{ id: string; name: string; contextualTitle?: string }>>;
   };
 };
 
@@ -55,5 +57,28 @@ describe('packageContributes', () => {
     const commands = manifest.contributes.commands;
     expect(commands.find((entry) => entry.command === 'codexHelper.archiveSession')?.icon).toBe('$(archive)');
     expect(commands.find((entry) => entry.command === 'codexHelper.deleteSession')?.icon).toBe('$(trash)');
+  });
+
+  // REQ: 侧边栏标题 / Scenario: 侧边栏标题不出现重复的「会话」
+  it('sidebar_title_is_not_duplicated', () => {
+    const container = manifest.contributes.viewsContainers.activitybar.find(
+      (entry) => entry.id === 'codexHelper',
+    );
+    const view = manifest.contributes.views.codexHelper?.find(
+      (entry) => entry.id === 'codexHelper.sessions',
+    );
+    expect(container).toBeDefined();
+    expect(view).toBeDefined();
+
+    // VS Code 把容器标题与视图名渲染成 `<容器标题>: <视图名>`；两段都写「会话」时
+    // 标题栏会变成 `CODEX 会话: 会话`（用户实测截图），所以两段必须各司其职。
+    expect(container!.title).toBe('Codex');
+    expect(view!.name).toBe('会话');
+    // contextualTitle 会参与同一段渲染，本视图不需要它
+    expect(view!.contextualTitle).toBeUndefined();
+
+    const rendered = `${container!.title}: ${view!.name}`;
+    expect(rendered).toBe('Codex: 会话');
+    expect(rendered.match(/会话/g) ?? []).toHaveLength(1);
   });
 });
