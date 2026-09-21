@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync, readlinkSync, watch } from 'node:fs';
 import * as vscode from 'vscode';
-import { createAppServerClient, type AppServerClient } from './codex/appServerClient';
+import { CLIENT_NAME, createAppServerClient, type AppServerClient } from './codex/appServerClient';
 import { resolveCodexBinary } from './codex/binary';
 import { createThreadApi } from './codex/threadApi';
 import type { SessionGroup, Thread } from './codex/types';
@@ -54,6 +54,11 @@ export function activate(context: vscode.ExtensionContext): void {
         binaryPath,
         spawn: ((command: string, args: string[], options: object) =>
           spawn(command, args, options)) as never,
+        // 版本唯一来源是 package.json：发版只改那一个文件
+        clientInfo: {
+          name: CLIENT_NAME,
+          version: String(context.extension.packageJSON.version),
+        },
         onStderrLine: (line: string) => console.log(`[codex app-server] ${line}`),
       });
     }

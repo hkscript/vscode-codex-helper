@@ -29,7 +29,12 @@ export interface AppServerClientOptions {
   binaryPath: string;
   spawn: SpawnLike;
   requestTimeoutMs?: number;
-  clientInfo?: { name: string; version: string };
+  /**
+   * Handshake identity. Required on purpose: the version has to come from
+   * `package.json` at runtime (`context.extension.packageJSON.version`), so a
+   * release bump only touches one file instead of every hard-coded literal.
+   */
+  clientInfo: { name: string; version: string };
   onStderrLine?: (line: string) => void;
 }
 
@@ -46,7 +51,8 @@ export interface AppServerClient {
 }
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
-export const DEFAULT_CLIENT_INFO = { name: 'vscode-codex-helper', version: '0.0.1' };
+/** Client name advertised to `codex app-server` during `initialize`. */
+export const CLIENT_NAME = 'vscode-codex-helper';
 
 interface PendingRequest {
   method: string;
@@ -64,7 +70,7 @@ interface JsonRpcMessage {
 
 export function createAppServerClient(options: AppServerClientOptions): AppServerClient {
   const timeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const clientInfo = options.clientInfo ?? DEFAULT_CLIENT_INFO;
+  const clientInfo = options.clientInfo;
 
   const pending = new Map<number, PendingRequest>();
   let child: ChildProcessLike | null = null;

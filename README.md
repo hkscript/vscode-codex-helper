@@ -91,6 +91,16 @@ pnpm typecheck   # tsc --noEmit
 
 按 `F5` 启动扩展开发宿主。
 
+### 发版
+
+版本号的**唯一来源**是 `package.json` 的 `version`（`codex app-server` 握手时上报的 clientInfo 也在运行时从这里读取），所以发版只改这一处：
+
+```bash
+pnpm version patch        # 或 minor / major：改 package.json 并打 tag
+pnpm build
+npx @vscode/vsce package  # 产物 vscode-codex-helper-<version>.vsix
+```
+
 ## 许可
 
 MIT，许可证全文见仓库根目录的 `LICENSE` 文件。

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createAppServerClient } from '../../src/codex/appServerClient';
+import { CLIENT_NAME, createAppServerClient } from '../../src/codex/appServerClient';
 import { createFakeSpawn, pushMessage } from '../helpers/fakes';
 
 function setup(requestTimeoutMs = 100) {
@@ -8,6 +8,9 @@ function setup(requestTimeoutMs = 100) {
     binaryPath: '/ext/openai.chatgpt/bin/linux-x86_64/codex',
     spawn: fake.spawn as never,
     requestTimeoutMs,
+    // 版本由调用方给（生产里取自 package.json），这里用假版本，
+    // 这样发版不需要动测试
+    clientInfo: { name: CLIENT_NAME, version: '9.9.9' },
   });
   return { fake, client };
 }
@@ -35,7 +38,8 @@ describe('appServerClient', () => {
     const first = JSON.parse(child.written[0]!.trim());
     expect(first.method).toBe('initialize');
     expect(first.id).toBe(1);
-    expect(first.params).toEqual({ clientInfo: { name: 'vscode-codex-helper', version: '0.0.1' } });
+    // 客户端只负责原样转发 clientInfo；名字是稳定标识，改掉要付一次断言的代价
+    expect(first.params).toEqual({ clientInfo: { name: 'vscode-codex-helper', version: '9.9.9' } });
 
     pushMessage(child, { id: 1, result: { userAgent: 'codex/0.0.0' } });
     return expect(ready).resolves.toEqual({ userAgent: 'codex/0.0.0' });
