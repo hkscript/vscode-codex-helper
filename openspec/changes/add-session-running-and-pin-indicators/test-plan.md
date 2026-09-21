@@ -22,9 +22,9 @@ T-009: `test/unit/runningState.test.ts::fallback_marks_running_within_stale_thre
 T-010: `test/unit/runningState.test.ts::fallback_clears_running_beyond_stale_threshold`
 T-011: `test/unit/runningState.test.ts::candidates_exclude_sessions_not_held_by_any_process`
 T-012: `test/unit/threadApi.test.ts::list_turns_requests_latest_turn_in_descending_order` 🔴 RED ✅ PASS
-T-013: `test/unit/processScan.test.ts::maps_rollout_file_to_holding_codex_process`
-T-014: `test/unit/processScan.test.ts::ignores_rollout_fd_held_by_non_codex_process`
-T-015: `test/unit/processScan.test.ts::skips_processes_that_vanish_during_scan`
+T-013: `test/unit/processScan.test.ts::maps_rollout_file_to_holding_codex_process` 🔴 RED ✅ PASS
+T-014: `test/unit/processScan.test.ts::ignores_rollout_fd_held_by_non_codex_process` 🔴 RED ✅ PASS
+T-015: `test/unit/processScan.test.ts::skips_processes_that_vanish_during_scan` 🔴 RED ✅ PASS
 T-016: `test/unit/runningTracker.test.ts::recomputes_and_notifies_after_rollout_write`
 T-017: `test/unit/runningTracker.test.ts::debounces_multiple_writes_into_one_notification`
 T-018: `test/unit/runningTracker.test.ts::does_not_notify_when_running_set_unchanged`

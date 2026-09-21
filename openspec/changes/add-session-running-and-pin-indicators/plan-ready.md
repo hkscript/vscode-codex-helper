@@ -37,7 +37,7 @@
 - 测试先行：先写 `test/unit/processScan.test.ts::maps_rollout_file_to_holding_codex_process`，用假的 `readdirSync` / `readlinkSync` / `readFileSync` 构造 `/proc` 快照（cmdline 同含 `codex` 与 `app-server`，fd 软链指向 `rollout-2026-09-21T13-08-48-<uuid>.jsonl`）
 - 验证方式：`pnpm test -- processScan` 先红后绿
 - 确定性：[Verified]（扫描规则在 proposal 阶段用真实 `/proc` 实测通过，本 task 只是把它搬进注入式实现）
-- [ ] 进程归属扫描
+- [x] 进程归属扫描
 
 ### Task 3: 运行状态纯函数
 - 目标：实现 `hasNoTerminalRecord` / `selectCandidates` / `computeRunningIds`，落地 D14/D15/D16/D18 的判定与降级
