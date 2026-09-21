@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "change": "add-codex-session-sidebar",
+  "head": "b02c46729888ba862abb52fbf479cb2fe64d2ba9",
+  "fingerprint": "sha256:eaed979894469ee153b71285b33b1cd0bd378145e28198838f84a08a69c3dcd9",
+  "testRuns": [
+    {
+      "name": "full-suite",
+      "exitCode": 0
+    }
+  ],
+  "scenarioCoverage": {
+    "mapped": 40,
+    "total": 40
+  },
+  "designConsistency": {
+    "pass": true,
+    "blockers": []
+  },
+  "userConfirmation": {
+    "received": true
+  }
+}

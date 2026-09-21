@@ -1,0 +1,11 @@
+- [x] Task 1: 工程骨架与会话 URI 契约（含 spike 门禁）
+- [x] Task 2: codex 可执行文件定位
+- [x] Task 3: app-server JSON-RPC 客户端
+- [x] Task 4: thread API 封装
+- [x] Task 5: 已打开标签页扫描
+- [x] Task 6: 置顶存储
+- [x] Task 7: 会话合并、分组与过滤
+- [x] Task 8: 会话打开器
+- [x] Task 9: 树视图
+- [x] Task 10: 命令注册与插件装配
+- [x] Task 11: 新建会话命令与分组默认展开（amend 追加）

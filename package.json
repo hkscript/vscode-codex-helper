@@ -1,0 +1,167 @@
+{
+  "name": "vscode-codex-helper",
+  "displayName": "Codex Session Sidebar",
+  "description": "Browse, open, rename and pin Codex sessions from a sidebar tree view.",
+  "version": "0.0.1",
+  "publisher": "hkscript",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.2"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionDependencies": [
+    "openai.chatgpt"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:codexHelper.sessions"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codexHelper",
+          "title": "Codex 会话",
+          "icon": "resources/codex.svg"
+        }
+      ]
+    },
+    "views": {
+      "codexHelper": [
+        {
+          "id": "codexHelper.sessions",
+          "name": "会话",
+          "icon": "resources/codex.svg",
+          "contextualTitle": "Codex 会话"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codexHelper.refresh",
+        "title": "Codex: 刷新会话列表",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codexHelper.openSession",
+        "title": "Codex: 打开会话"
+      },
+      {
+        "command": "codexHelper.newSession",
+        "title": "Codex: 新建会话",
+        "icon": "$(add)"
+      },
+      {
+        "command": "codexHelper.renameSession",
+        "title": "Codex: 重命名会话"
+      },
+      {
+        "command": "codexHelper.pinSession",
+        "title": "Codex: 置顶会话"
+      },
+      {
+        "command": "codexHelper.unpinSession",
+        "title": "Codex: 取消置顶"
+      },
+      {
+        "command": "codexHelper.setFilter",
+        "title": "Codex: 过滤会话",
+        "icon": "$(search)"
+      },
+      {
+        "command": "codexHelper.clearFilter",
+        "title": "Codex: 清除过滤",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "codexHelper.loadMore",
+        "title": "Codex: 加载更多"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "codexHelper.newSession",
+          "when": "view == codexHelper.sessions",
+          "group": "navigation@0"
+        },
+        {
+          "command": "codexHelper.refresh",
+          "when": "view == codexHelper.sessions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexHelper.setFilter",
+          "when": "view == codexHelper.sessions",
+          "group": "navigation@2"
+        },
+        {
+          "command": "codexHelper.clearFilter",
+          "when": "view == codexHelper.sessions",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "codexHelper.openSession",
+          "when": "view == codexHelper.sessions && viewItem =~ /^session/",
+          "group": "inline@1"
+        },
+        {
+          "command": "codexHelper.renameSession",
+          "when": "view == codexHelper.sessions && viewItem =~ /^session/",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "codexHelper.pinSession",
+          "when": "view == codexHelper.sessions && viewItem =~ /^session$/ || viewItem == session.open",
+          "group": "1_modification@2"
+        },
+        {
+          "command": "codexHelper.unpinSession",
+          "when": "view == codexHelper.sessions && viewItem == session.pinned",
+          "group": "1_modification@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Codex Session Sidebar",
+      "properties": {
+        "codexHelper.codexExecutable": {
+          "type": "string",
+          "default": "",
+          "description": "codex 可执行文件路径。留空则回退到 Codex 插件的 chatgpt.cliExecutable 配置，再回退到 Codex 插件自带二进制。"
+        },
+        "codexHelper.pageSize": {
+          "type": "number",
+          "default": 50,
+          "description": "每次从 codex app-server 拉取的会话条数。"
+        },
+        "codexHelper.filterByWorkspaceCwd": {
+          "type": "boolean",
+          "default": false,
+          "description": "开启后只列出当前工作区目录下的会话。"
+        },
+        "codexHelper.autoRefreshSeconds": {
+          "type": "number",
+          "default": 0,
+          "description": "自动刷新间隔（秒）。0 表示关闭。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "1.96.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
