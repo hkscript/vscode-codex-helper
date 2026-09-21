@@ -35,9 +35,13 @@ export function scanCodexTabs(
       if (!isCustomInput(tab.input)) continue;
       const input = tab.input as { viewType: string; uri: UriLike };
       if (input.viewType !== viewType) continue;
-      // A panel that is not bound to a conversation yet yields `null` here; it
-      // still belongs in the tree as an unnamed new session.
-      open.push({ id: parseConversationId(input.uri), tabLabel: tab.label });
+      // A panel that is not bound to a conversation yet has no conversation
+      // identity at all. The sidebar only lists sessions, so such a tab is
+      // skipped: letting it through used to create a synthetic `open-tab:<n>`
+      // row that opened a nonexistent conversation when clicked.
+      const id = parseConversationId(input.uri);
+      if (!id) continue;
+      open.push({ id, tabLabel: tab.label, uri: input.uri });
     }
   }
   return open;

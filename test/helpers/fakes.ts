@@ -172,8 +172,19 @@ export function makeThread(partial: Partial<Thread> & { id: string }): Thread {
   };
 }
 
+/**
+ * 未绑定会话的面板用 new-panel 路由（带 query），与真实扫描到的标签同形；
+ * bound 的标签用 `/local/<id>`。
+ */
 export function makeOpenTab(id: string | null, tabLabel = 'tab'): OpenTab {
-  return { id, tabLabel };
+  const uri = createFakeUriApi()
+    .file(id ? `/local/${id}` : '/extension/panel/new')
+    .with({
+      scheme: 'openai-codex',
+      authority: 'route',
+      query: id ? '' : 'newPanel=stub',
+    });
+  return { id, tabLabel, uri };
 }
 
 export function makeTurn(partial: Partial<Turn> & { id: string }): Turn {

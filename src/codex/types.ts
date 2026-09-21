@@ -63,9 +63,20 @@ export interface ThreadListResponse {
 
 /** A Codex custom editor tab found in the current window. */
 export interface OpenTab {
-  /** `null` for a freshly created panel that is not bound to a conversation yet. */
+  /**
+   * The tab's conversation id. `scanCodexTabs` only yields tabs that are
+   * already bound to a conversation, so this is a real id for every scanned
+   * tab; a freshly created panel has no conversation identity at all and is
+   * skipped instead of being given a synthetic one.
+   */
   id: string | null;
   tabLabel: string;
+  /**
+   * The tab's own resource — the only handle that focuses that exact tab
+   * again (`vscode.openWith` on the same resource reveals it instead of
+   * creating a second editor).
+   */
+  uri: UriLike;
 }
 
 /** One row rendered in the tree. */
