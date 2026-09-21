@@ -81,7 +81,7 @@
 - 测试先行：先写 `test/unit/runningTracker.test.ts::recomputes_and_notifies_after_rollout_write`，用注入的假 watch / 假定时器（`vi.useFakeTimers`）驱动去抖
 - 验证方式：`pnpm test -- runningTracker` 先红后绿
 - 确定性：[Inferred]（依赖 Task 2/3 的接口形状，实现顺序上必须排在它们之后）
-- [ ] 运行状态追踪器（监听 + 去抖 + 轮询兜底）
+- [x] 运行状态追踪器（监听 + 去抖 + 轮询兜底）
 
 ### Task 7: 接线、自激防护与配置项
 - 目标：在 `activate` 里构造追踪器并接到 `provider.refresh`，`load()` 把运行集合传进 `buildSessionGroups`，`deactivate` 回收追踪器；新增 3 个配置项；落地 D23「集合未变化不回调」

@@ -25,12 +25,12 @@ T-012: `test/unit/threadApi.test.ts::list_turns_requests_latest_turn_in_descendi
 T-013: `test/unit/processScan.test.ts::maps_rollout_file_to_holding_codex_process` 🔴 RED ✅ PASS
 T-014: `test/unit/processScan.test.ts::ignores_rollout_fd_held_by_non_codex_process` 🔴 RED ✅ PASS
 T-015: `test/unit/processScan.test.ts::skips_processes_that_vanish_during_scan` 🔴 RED ✅ PASS
-T-016: `test/unit/runningTracker.test.ts::recomputes_and_notifies_after_rollout_write`
-T-017: `test/unit/runningTracker.test.ts::debounces_multiple_writes_into_one_notification`
+T-016: `test/unit/runningTracker.test.ts::recomputes_and_notifies_after_rollout_write` 🔴 RED ✅ PASS
+T-017: `test/unit/runningTracker.test.ts::debounces_multiple_writes_into_one_notification` 🔴 RED ✅ PASS
 T-018: `test/unit/runningTracker.test.ts::does_not_notify_when_running_set_unchanged`
-T-019: `test/unit/runningTracker.test.ts::falls_back_to_polling_when_watch_throws`
-T-020: `test/unit/runningTracker.test.ts::releases_watchers_for_dropped_candidates`
-T-021: `test/unit/runningTracker.test.ts::dispose_releases_all_watchers_and_timers`
+T-019: `test/unit/runningTracker.test.ts::falls_back_to_polling_when_watch_throws` 🔴 RED ✅ PASS
+T-020: `test/unit/runningTracker.test.ts::releases_watchers_for_dropped_candidates` 🔴 RED ✅ PASS
+T-021: `test/unit/runningTracker.test.ts::dispose_releases_all_watchers_and_timers` 🔴 RED ✅ PASS
 T-022: `test/unit/sessionStore.test.ts::pinned_session_stays_in_pinned_group_when_open` 🔴 RED ✅ PASS
 T-023: `test/unit/sessionStore.test.ts::unpinning_removes_pinned_row_but_keeps_open_row` 🔴 RED ✅ PASS
 T-024: `test/unit/sessionStore.test.ts::marks_sessions_present_in_running_set` 🔴 RED ✅ PASS
@@ -38,7 +38,7 @@ T-025: `test/unit/treeProvider.test.ts::same_session_gets_distinct_node_ids_per_
 T-026: `test/unit/treeProvider.test.ts::running_session_uses_spinner_icon` 🔴 RED ✅ PASS
 T-027: `test/unit/treeProvider.test.ts::pinned_session_description_starts_with_pin_marker` 🔴 RED ✅ PASS
 T-028: `test/unit/treeProvider.test.ts::open_and_pinned_item_context_value_is_pinned` 🔴 RED ✅ PASS
-T-029: `test/unit/runningTracker.test.ts::stale_recompute_results_are_discarded`
+T-029: `test/unit/runningTracker.test.ts::stale_recompute_results_are_discarded` 🔴 RED ✅ PASS
 INV-001: `test/unit/runningState.test.ts::running_iff_no_terminal_record_and_owner_alive` covers T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010 🔴 RED ✅ PASS
 INV-002: `test/unit/sessionStore.test.ts::group_membership_matrix_holds_for_all_combinations` covers T-022, T-023 🔴 RED ✅ PASS
 
