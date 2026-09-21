@@ -69,7 +69,7 @@ export interface OpenTab {
    * tab; a freshly created panel has no conversation identity at all and is
    * skipped instead of being given a synthetic one.
    */
-  id: string | null;
+  id: string;
   tabLabel: string;
   /**
    * The tab's own resource — the only handle that focuses that exact tab
@@ -89,9 +89,16 @@ export interface SessionItem {
   pinned: boolean;
   open: boolean;
   running: boolean;
+  /** 「已归档」组的行：打开它之前要先取消归档（design D48）。 */
+  archived: boolean;
+  /**
+   * 该会话已打开时，对应标签自己的 resource（点击即聚焦那个标签）；
+   * 没打开则为 `null`，点击只能按会话 id 打开。
+   */
+  tabUri: UriLike | null;
 }
 
-export type SessionGroupId = 'open' | 'pinned' | 'history';
+export type SessionGroupId = 'pinned' | 'recent' | 'history' | 'archived';
 
 export interface SessionGroup {
   id: SessionGroupId;

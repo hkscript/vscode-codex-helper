@@ -1,22 +1,27 @@
-import type { OpenTab, SessionGroup, SessionGroupId, SessionItem, Thread } from '../codex/types';
+import type { OpenTab, SessionGroup, SessionGroupId, SessionItem, Thread, UriLike } from '../codex/types';
 
 /**
- * Merges the three session sources into the tree's groups.
+ * Merges the session sources into the tree's groups.
  *
- * Design decisions encoded here (design.md D7/D8/D19):
- *  - 已打开 and 置顶 may both contain the same session — pinning survives
- *    opening (D19). 历史 stays mutually exclusive with both;
- *  - a pinned id that exists neither in the thread list nor as an open tab is a
- *    stale pin and is dropped (no ghost rows);
- *  - every rendered group is filtered with the same predicate, so "everything
- *    shown matches the filter" holds for all three groups.
+ * Design decisions encoded here (design.md D33/D40/D45):
+ *  - 粒度统一为「会话」：置顶 / 最近 / 历史 / 已归档，一个会话只出现一行；
+ *  - 已归档优先：归档的会话从另外三组里拿掉，否则同一个会话又会两行；
+ *  - 「最近」= 未置顶会话里 `updatedAt` 最大的 RECENT_LIMIT 个，其余进「历史」；
+ *  - 标签（openTabs）不再产生行，只用来给对应会话行打「已打开」标记并带上该标签的
+ *    resource —— 未绑定会话的面板标签在扫描阶段就被丢掉（openTabs.ts），因此这里
+ *    不存在「只有标签、没有会话」的行；
+ *  - 每个分组用同一个过滤谓词，保证「显示出来的都匹配过滤条件」。
  */
 
 export const GROUP_LABELS: Record<SessionGroupId, string> = {
-  open: '已打开',
   pinned: '置顶',
+  recent: '最近',
   history: '历史',
+  archived: '已归档',
 };
+
+/** 「最近」组的容量：未置顶会话里按 `updatedAt` 取前 N 个。 */
+export const RECENT_LIMIT = 10;
 
 export interface FilterableSession {
   id: string;
@@ -26,6 +31,8 @@ export interface FilterableSession {
 
 export interface BuildSessionGroupsInput {
   threads: Thread[];
+  /** 已归档会话（来自 `thread/list { archived: true }`），与 `threads` 互斥。 */
+  archivedThreads?: Thread[];
   openTabs: OpenTab[];
   pinnedIds: string[];
   runningIds?: Iterable<string> | null;
@@ -53,6 +60,7 @@ export function sessionItemLabel(thread: Thread | undefined, fallbackLabel?: str
 
 export function buildSessionGroups(input: BuildSessionGroupsInput): SessionGroup[] {
   const threads = input.threads ?? [];
+  const archivedThreads = input.archivedThreads ?? [];
   const openTabs = input.openTabs ?? [];
   const pinnedIds = input.pinnedIds ?? [];
   const filter = input.filter ?? null;
@@ -60,68 +68,64 @@ export function buildSessionGroups(input: BuildSessionGroupsInput): SessionGroup
   const threadsById = new Map(threads.map((thread) => [thread.id, thread]));
   const pinnedSet = new Set(pinnedIds);
   const runningSet = new Set(input.runningIds ?? []);
-  // 只管「历史组要排除谁」。已打开与置顶可以同时命中同一个会话（D19）。
-  const claimed = new Set<string>();
+  // 会话 id → 该标签自己的 resource：已打开的行靠它聚焦已经开着的那个标签。
+  const tabUriByThreadId = new Map<string, UriLike>();
+  for (const tab of openTabs) tabUriByThreadId.set(tab.id, tab.uri);
 
-  function toItem(
-    id: string,
-    thread: Thread | undefined,
-    tabLabel: string | null,
-    open: boolean,
-  ): SessionItem {
+  function toItem(id: string, thread: Thread | undefined, archived: boolean): SessionItem {
     return {
       id,
-      label: sessionItemLabel(thread, tabLabel),
+      label: sessionItemLabel(thread),
       preview: thread?.preview ?? '',
       cwd: thread?.cwd ?? null,
       updatedAt: thread?.updatedAt ?? null,
       pinned: pinnedSet.has(id),
-      open,
+      open: tabUriByThreadId.has(id),
       running: runningSet.has(id),
+      archived,
+      tabUri: tabUriByThreadId.get(id) ?? null,
     };
   }
 
-  // 1. 已打开：标签页顺序即显示顺序。未绑定会话的新建标签用合成 id 占位，
-  //    好让同一分组内「一个 id 只出现一次」不会被两个同名新标签破坏。
-  const open: SessionItem[] = [];
-  const openIds = new Set<string>();
-  openTabs.forEach((tab: OpenTab, index: number) => {
-    const id = tab.id ?? `open-tab:${index}`;
-    if (openIds.has(id)) return;
-    openIds.add(id);
-    claimed.add(id);
-    open.push(toItem(id, tab.id ? threadsById.get(tab.id) : undefined, tab.tabLabel, true));
-  });
-
-  // 2. 置顶：不再因为「已打开」而跳过（D19）；服务端查不到的陈旧置顶仍然丢弃（D8）。
-  const pinned: SessionItem[] = [];
-  const pinnedSeen = new Set<string>();
-  for (const id of pinnedIds) {
-    if (pinnedSeen.has(id)) continue;
-    const thread = threadsById.get(id);
-    if (!thread) continue;
-    pinnedSeen.add(id);
-    claimed.add(id);
-    // open 如实反映状态：同一会话的两行都该说出「它开着」。
-    pinned.push(toItem(id, thread, null, openIds.has(id)));
-  }
-
-  // 3. 历史：既没打开也没置顶的全部。
-  const history: SessionItem[] = [];
-  for (const thread of threads) {
+  // 1. 已归档：优先级最高，先占住这些 id，另外三组不再收它们。
+  const archived: SessionItem[] = [];
+  const claimed = new Set<string>();
+  for (const thread of archivedThreads) {
     if (claimed.has(thread.id)) continue;
     claimed.add(thread.id);
-    history.push(toItem(thread.id, thread, null, false));
+    archived.push(toItem(thread.id, thread, true));
   }
+
+  // 2. 置顶（未归档）：服务端查不到的陈旧置顶仍然丢弃（D8）。
+  const pinned: SessionItem[] = [];
+  for (const id of pinnedIds) {
+    if (claimed.has(id)) continue;
+    const thread = threadsById.get(id);
+    if (!thread) continue;
+    claimed.add(id);
+    pinned.push(toItem(id, thread, false));
+  }
+
+  // 3. 其余未归档会话：最近更新的 RECENT_LIMIT 个进「最近」，剩下的进「历史」。
+  //    排序按 updatedAt 而不是依赖服务端返回顺序——否则分组结果会随上游排序变化。
+  const rest = threads.filter((thread) => !claimed.has(thread.id) && !pinnedSet.has(thread.id));
+  const recent = [...rest]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, RECENT_LIMIT)
+    .map((thread) => toItem(thread.id, thread, false));
+  const recentIds = new Set(recent.map((session) => session.id));
+  const history = rest
+    .filter((thread) => !recentIds.has(thread.id))
+    .map((thread) => toItem(thread.id, thread, false));
 
   return (
     [
-      { id: 'open' as const, label: GROUP_LABELS.open, sessions: open },
       { id: 'pinned' as const, label: GROUP_LABELS.pinned, sessions: pinned },
+      { id: 'recent' as const, label: GROUP_LABELS.recent, sessions: recent },
       { id: 'history' as const, label: GROUP_LABELS.history, sessions: history },
+      { id: 'archived' as const, label: GROUP_LABELS.archived, sessions: archived },
     ]
-      // 所有分组都过同一个谓词。历史组虽然服务端已经过滤过一次，本地要再复核一遍，
-      // 否则「搜索后仍显示不匹配项」就会在历史组出现（D7 + INV-002）。
+      // 所有分组都过同一个谓词，否则「搜索后仍显示不匹配项」会在某个分组里出现。
       .map((group) => ({
         ...group,
         sessions: group.sessions.filter((session) => matchesFilter(session, filter)),
