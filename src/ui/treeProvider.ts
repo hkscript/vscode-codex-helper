@@ -22,7 +22,7 @@ export interface SessionItemNode {
   id: string;
   label: string;
   description?: string;
-  contextValue: 'session' | 'session.open' | 'session.pinned';
+  contextValue: 'session' | 'session.open' | 'session.pinned' | 'session.archived';
   session: SessionItem;
 }
 
@@ -78,23 +78,25 @@ export function createSessionTreeProvider(
   }
 
   /**
-   * 分组节点的**默认**折叠状态（design D13）：常用两组展开，历史长尾收起。
+   * 分组节点的**默认**折叠状态（design D13/D40）：常用两组展开，「历史」「已归档」收起。
    * 只给默认值——用户手动折叠/展开后由 VS Code 按 TreeItem.id 记忆，本插件不重置。
    */
   function defaultCollapsibleState(group: SessionGroup): vscode.TreeItemCollapsibleState {
-    return group.id === 'history'
+    return group.id === 'history' || group.id === 'archived'
       ? vscode.TreeItemCollapsibleState.Collapsed
       : vscode.TreeItemCollapsibleState.Expanded;
   }
 
   function toItemNode(session: SessionItem, groupId: SessionGroupId): SessionItemNode {
-    // 置顶优先于已打开：右键菜单的语义锚点是「置顶与否」，
-    // 已打开且已置顶的条目必须给出「取消置顶」（D22）。
-    const contextValue = session.pinned
-      ? ('session.pinned' as const)
-      : session.open
-        ? ('session.open' as const)
-        : ('session' as const);
+    // 归档优先（它的右键菜单是「取消归档」，语义与置顶无关）；其次是置顶优先于已打开：
+    // 右键菜单的语义锚点是「置顶与否」，已打开且已置顶的条目必须给出「取消置顶」（D22）。
+    const contextValue = session.archived
+      ? ('session.archived' as const)
+      : session.pinned
+        ? ('session.pinned' as const)
+        : session.open
+          ? ('session.open' as const)
+          : ('session' as const);
     const base = cwdBasename(session.cwd);
     // 图标位归运行状态，置顶只能占 description 前缀（D21）。
     // 没有目录时 trimEnd 掉 `📌 ` 的尾随空格（D27）。
@@ -163,8 +165,17 @@ export function createSessionTreeProvider(
         title: '打开会话',
         // A payload rather than the node itself: the context menu hands the
         // command the node while a click hands it these arguments, and
-        // `extension.ts` normalizes both shapes.
-        arguments: [{ sessionId: node.session.id, label: node.label }],
+        // `readSessionRow` normalizes both shapes. `tabUri` 是该会话已打开时
+        // 对应标签自己的 resource（点击即聚焦它），`archived` 决定打开前是否
+        // 需要先取消归档。
+        arguments: [
+          {
+            sessionId: node.session.id,
+            label: node.label,
+            tabUri: node.session.tabUri,
+            archived: node.session.archived,
+          },
+        ],
       };
       item.iconPath = new vscode.ThemeIcon(
         node.session.running
