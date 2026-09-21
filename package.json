@@ -63,6 +63,20 @@
         "title": "Codex: 置顶会话"
       },
       {
+        "command": "codexHelper.archiveSession",
+        "title": "Codex: 归档会话",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "codexHelper.unarchiveSession",
+        "title": "Codex: 取消归档"
+      },
+      {
+        "command": "codexHelper.deleteSession",
+        "title": "Codex: 删除会话",
+        "icon": "$(trash)"
+      },
+      {
         "command": "codexHelper.unpinSession",
         "title": "Codex: 取消置顶"
       },
@@ -106,24 +120,39 @@
       ],
       "view/item/context": [
         {
+          "command": "codexHelper.archiveSession",
+          "when": "view == codexHelper.sessions && viewItem =~ /^session/ && viewItem != session.archived",
+          "group": "inline@1"
+        },
+        {
+          "command": "codexHelper.deleteSession",
+          "when": "view == codexHelper.sessions && viewItem == session.archived",
+          "group": "inline@2"
+        },
+        {
           "command": "codexHelper.openSession",
           "when": "view == codexHelper.sessions && viewItem =~ /^session/",
-          "group": "inline@1"
+          "group": "1_modification@0"
+        },
+        {
+          "command": "codexHelper.unarchiveSession",
+          "when": "view == codexHelper.sessions && viewItem == session.archived",
+          "group": "1_modification@1"
         },
         {
           "command": "codexHelper.renameSession",
           "when": "view == codexHelper.sessions && viewItem =~ /^session/",
-          "group": "1_modification@1"
+          "group": "1_modification@2"
         },
         {
           "command": "codexHelper.pinSession",
           "when": "view == codexHelper.sessions && viewItem =~ /^session$/ || viewItem == session.open",
-          "group": "1_modification@2"
+          "group": "1_modification@3"
         },
         {
           "command": "codexHelper.unpinSession",
           "when": "view == codexHelper.sessions && viewItem == session.pinned",
-          "group": "1_modification@3"
+          "group": "1_modification@4"
         }
       ]
     },

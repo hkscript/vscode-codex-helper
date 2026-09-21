@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scanCodexTabs } from '../../src/session/openTabs';
+import { scanCodexTabs, selectTabsForConversation } from '../../src/session/openTabs';
 import { createFakeUriApi } from '../helpers/fakes';
 
 const uriApi = createFakeUriApi();
@@ -93,5 +93,30 @@ describe('openTabs', () => {
     expect(scanned.map((tab) => tab.uri)).toEqual([withQuery.uri, remote.uri]);
     expect(scanned[0]!.uri.query).toBe('projectId=p1');
     expect(scanned[1]!.uri.path).toBe('/remote/conv-r');
+  });
+
+  // REQ: 会话归档与删除 / Scenario: 删除只关闭被删会话自己的标签（标签定位）
+  it('selects_open_tabs_of_a_conversation', () => {
+    const tabGroups = {
+      all: [
+        {
+          tabs: [
+            { label: 'A', input: conversationInput('conv-1'), handle: { id: 'tab-a' } },
+            { label: 'B', input: conversationInput('conv-2'), handle: { id: 'tab-b' } },
+          ],
+        },
+        {
+          tabs: [
+            // 同一个会话在另一个分组里也开着（多标签）⇒ 两个句柄都要被选中
+            { label: 'A again', input: conversationInput('conv-1'), handle: { id: 'tab-c' } },
+            { label: 'README', input: { uri: uriApi.file('/repo/README.md') }, handle: { id: 'tab-d' } },
+          ],
+        },
+      ],
+    };
+
+    expect(selectTabsForConversation(tabGroups, 'conv-1')).toEqual([{ id: 'tab-a' }, { id: 'tab-c' }]);
+    // 没开着的会话 ⇒ 一个都不关
+    expect(selectTabsForConversation(tabGroups, 'conv-9')).toEqual([]);
   });
 });
