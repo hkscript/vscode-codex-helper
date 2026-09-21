@@ -45,4 +45,48 @@ describe('opener', () => {
     const issued = executeCommand.mock.calls.map((call) => call[0]);
     expect(issued).not.toContain('chatgpt.newCodexPanel');
   });
+
+  // REQ: 会话打开与聚焦 / Scenario: 已打开的会话按它自己的标签 resource 打开
+  it('reveals_open_tab_with_its_own_resource', async () => {
+    const calls: unknown[][] = [];
+    const opener = createSessionOpener({
+      executeCommand: async (command: string, ...args: unknown[]) => {
+        calls.push([command, ...args]);
+      },
+      showErrorMessage: () => undefined,
+      uriApi,
+    });
+    const tabUri = uriApi
+      .file('/local/conv-1')
+      .with({ scheme: 'openai-codex', authority: 'route', query: 'projectId=p1' }) as UriLike;
+
+    await expect(opener.revealTab(tabUri)).resolves.toBe(true);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]).toBe('vscode.openWith');
+    // 必须是该标签自己的 resource 原对象：重拼会丢掉 query/远端，也就聚焦不到那个标签
+    expect(calls[0]![1]).toBe(tabUri);
+    expect(calls[0]![2]).toBe('chatgpt.conversationEditor');
+    expect(calls[0]![3]).toEqual({ preview: false });
+  });
+
+  // REQ: 会话打开与聚焦 / Scenario: 打开标签 resource 失败时报错且不新建
+  it('shows_error_and_never_creates_new_panel_when_revealing_tab', async () => {
+    const executeCommand = vi.fn(async (_command: string, ..._args: unknown[]) => {
+      throw new Error('no custom editor registered for chatgpt.conversationEditor');
+    });
+    const showErrorMessage = vi.fn((_message: string) => undefined);
+    const opener = createSessionOpener({ executeCommand, showErrorMessage, uriApi });
+    const tabUri = uriApi
+      .file('/local/conv-1')
+      .with({ scheme: 'openai-codex', authority: 'route', query: '' }) as UriLike;
+
+    await expect(opener.revealTab(tabUri)).resolves.toBe(false);
+
+    expect(showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(String(showErrorMessage.mock.calls[0]![0])).toContain('无法打开 Codex 标签页');
+    expect(String(showErrorMessage.mock.calls[0]![0])).toContain('no custom editor registered');
+    // 绝不回退成「新建会话」（D9/D30）
+    expect(executeCommand.mock.calls.map((call) => call[0])).not.toContain('chatgpt.newCodexPanel');
+  });
 });
