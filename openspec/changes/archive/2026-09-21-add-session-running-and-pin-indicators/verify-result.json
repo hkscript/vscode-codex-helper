@@ -1,8 +1,8 @@
 {
   "version": 1,
   "change": "add-session-running-and-pin-indicators",
-  "head": "f31b5e50cfdf31b907a25c5148fbf5a24cde59bd",
-  "fingerprint": "sha256:d3d457f4914c6017b2181ac72a70ba08421ab30c273632f76ca85463abdd4879",
+  "head": "b74bad9ce1d61fdac1be358293a53268c8508d33",
+  "fingerprint": "sha256:81527bbba10253d5a0734df8d9ad1f59e08b8b651b1e3bfaf3604585b26bdb30",
   "testRuns": [
     {
       "name": "full-suite",
