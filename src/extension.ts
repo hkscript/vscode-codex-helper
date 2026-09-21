@@ -6,8 +6,16 @@ import { CLIENT_NAME, createAppServerClient, type AppServerClient } from './code
 import { resolveCodexBinary } from './codex/binary';
 import { createThreadApi } from './codex/threadApi';
 import type { SessionGroup, Thread } from './codex/types';
-import { createNewSessionCommand, createRenameSessionCommand, registerCommands } from './commands';
+import {
+  createArchiveSessionCommand,
+  createDeleteSessionCommand,
+  createNewSessionCommand,
+  createRenameSessionCommand,
+  createUnarchiveSessionCommand,
+  registerCommands,
+} from './commands';
 import { createSessionOpener } from './session/opener';
+import { createRowOpener } from './session/rowOpener';
 import { scanCodexTabs } from './session/openTabs';
 import { createPinStore } from './session/pinStore';
 import { scanHeldRollouts } from './session/processScan';
@@ -90,11 +98,20 @@ export function activate(context: vscode.ExtensionContext): void {
   let tracker: RunningTracker | undefined;
 
   async function load(): Promise<SessionGroup[]> {
-    const page = await api().listThreads({
-      searchTerm: filter,
-      cwd: workspaceCwd(),
-      cursor: null,
-    });
+    // 两批会话并行拉：未归档（置顶/最近/历史）与已归档（「已归档」分组 —— 它同时是
+    // 删除入口与撤销归档的地方）。两次请求共用同一个 app-server 握手（start 是幂等的）。
+    const [page, archivedPage] = await Promise.all([
+      api().listThreads({
+        searchTerm: filter,
+        cwd: workspaceCwd(),
+        cursor: null,
+      }),
+      api().listThreads({
+        searchTerm: filter,
+        cwd: workspaceCwd(),
+        archived: true,
+      }),
+    ]);
     threads = page.data;
     cursor = page.nextCursor;
     // 喂最新的线程列表。tracker 只在运行集合真的变化时才回调（D23），
@@ -102,6 +119,7 @@ export function activate(context: vscode.ExtensionContext): void {
     tracker?.update(threads);
     return buildSessionGroups({
       threads,
+      archivedThreads: archivedPage.data,
       openTabs: openTabs(),
       pinnedIds: pinStore.list(),
       runningIds: tracker?.snapshot() ?? null,
@@ -140,18 +158,49 @@ export function activate(context: vscode.ExtensionContext): void {
     uriApi: vscode.Uri,
   });
 
+  const showErrorMessage = (message: string) => vscode.window.showErrorMessage(message);
+
+  // 会话级动作的唯一 API 入口：重命名 + 归档三件套。
+  const threadActions = {
+    setThreadName: (threadId: string, name: string) => api().setThreadName(threadId, name),
+    archiveThread: (threadId: string) => api().archiveThread(threadId),
+    unarchiveThread: (threadId: string) => api().unarchiveThread(threadId),
+    deleteThread: (threadId: string) => api().deleteThread(threadId),
+  };
+
   const renameSession = createRenameSessionCommand({
-    threadApi: { setThreadName: (threadId: string, name: string) => api().setThreadName(threadId, name) },
+    threadApi: threadActions,
     showInputBox: (options) => Promise.resolve(vscode.window.showInputBox(options)),
-    showErrorMessage: (message: string) => vscode.window.showErrorMessage(message),
+    showErrorMessage,
   });
+
+  // 归档 / 取消归档 / 删除：三个命令都不弹确认框（用户明确要求），
+  // 防误删靠「删除入口只出现在已归档分组」这道流程闸。
+  const archiveSession = createArchiveSessionCommand({ threadApi: threadActions, showErrorMessage });
+  const unarchiveSession = createUnarchiveSessionCommand({ threadApi: threadActions, showErrorMessage });
+  const deleteSession = createDeleteSessionCommand({ threadApi: threadActions, showErrorMessage });
 
   const newSession = createNewSessionCommand({
     executeCommand: (command: string, ...args: unknown[]) =>
       Promise.resolve(vscode.commands.executeCommand(command, ...args)),
-    showErrorMessage: (message: string) => vscode.window.showErrorMessage(message),
+    showErrorMessage,
     uriApi: vscode.Uri,
     createNonce: () => randomUUID(),
+  });
+
+  /**
+   * 打开一行的编排（design D48）：归档行**先**取消归档（走同一个 unarchive 命令，
+   * 失败会报错并返回 false —— 但不阻止打开），再按该行自己的标签 resource 聚焦，
+   * 或者按会话 id 打开。
+   */
+  const rowOpener = createRowOpener({
+    unarchive: async (threadId: string) => {
+      const unarchived = await unarchiveSession({ sessionId: threadId });
+      if (unarchived) provider.refresh();
+      return unarchived;
+    },
+    revealTab: (uri) => opener.revealTab(uri),
+    openSession: (id) => opener.openSession(id),
   });
 
   context.subscriptions.push(
@@ -159,8 +208,25 @@ export function activate(context: vscode.ExtensionContext): void {
     ...registerCommands({
       refresh: () => provider.refresh(),
       openSession: async (node) => {
+        await rowOpener(node);
+      },
+      archiveSession: async (node) => {
         const id = sessionIdOf(node);
-        if (id) await opener.openSession(id);
+        if (!id) return;
+        if (await archiveSession({ sessionId: id })) provider.refresh();
+      },
+      unarchiveSession: async (node) => {
+        const id = sessionIdOf(node);
+        if (!id) return;
+        if (await unarchiveSession({ sessionId: id })) provider.refresh();
+      },
+      deleteSession: async (node) => {
+        const id = sessionIdOf(node);
+        if (!id) return;
+        if (!(await deleteSession({ sessionId: id }))) return;
+        // 删除不可逆：清掉置顶状态（否则 globalState 里留着陈旧 id），再刷新
+        await pinStore.unpin(id);
+        provider.refresh();
       },
       renameSession: (node) => {
         const sessionId = sessionIdOf(node);

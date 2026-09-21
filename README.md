@@ -2,13 +2,14 @@
 
 在 VS Code 侧边栏里浏览、打开、重命名和置顶 Codex 会话，并一眼看出哪个会话正在运行。
 
-Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切换要点好几层。这个扩展把会话列表提到活动栏：一棵树，三个分组，点一下就回到对话。
+Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切换要点好几层。这个扩展把会话列表提到活动栏：一棵树，四个分组，点一下就回到对话。
 
 ## 功能
 
-- **会话树**：活动栏新增「Codex 会话」视图，按 `已打开` / `置顶` / `历史` 三组展示，每组标题右侧显示条数。「已打开」与「置顶」可以同时包含同一个会话——置顶不会因为会话被打开而失效；「历史」与前两组互斥。
-- **打开会话**：单击树节点即可打开或聚焦对应的 Codex 会话标签页（复用 Codex 自己的会话编辑器，不是只读预览）。
-- **新建会话**：视图标题栏的 `+`，委派 Codex 的新建面板命令。
+- **会话树**：活动栏新增「Codex 会话」视图，按 `置顶` / `最近` / `历史` / `已归档` 四组展示，每组标题右侧显示条数。一个会话只出现一行：已归档优先，其次置顶，其余里最近更新的 10 个进「最近」，剩下的进「历史」。
+- **打开会话**：单击树节点即可打开或聚焦对应的 Codex 会话标签页（复用 Codex 自己的会话编辑器，不是只读预览）。已经开着标签的条目会**聚焦那个标签**而不是再开一个；「已归档」里的条目打开时会先取消归档。
+- **新建会话**：视图标题栏的 `+`，每次点击开出一个独立的空白面板（未绑定会话前不出现在侧边栏）。
+- **归档与删除（两步）**：未归档条目悬停出现「归档」按钮；归档后可展开「已归档」分组，在那里悬停出现「删除」按钮。三个动作都不弹确认框——防误删靠流程（删除入口只对已归档会话开放），归档本身可逆（右键「取消归档」）。
 - **重命名**：改名通过 `thread/name/set` 写回 Codex，TUI 和官方扩展里同样生效，不是本地别名。
 - **置顶**：常用会话固定在顶部，状态保存在扩展的 `globalState` 里，跨窗口生效；置顶条目的描述带 `📌` 前缀。
 - **运行中标识**：正在执行回合的会话显示旋转图标（`loading~spin`），一眼看出哪个对话还在跑。
@@ -27,7 +28,7 @@ Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切�
 ## 使用
 
 1. 点击活动栏的 Codex 图标，打开「Codex 会话」视图。
-2. 单击任意会话打开它；右键菜单里有重命名、置顶 / 取消置顶。
+2. 单击任意会话打开它；把鼠标移到条目上会出现「归档」（已归档条目上是「删除」），右键菜单里有打开、重命名、置顶 / 取消置顶、取消归档。
 3. 视图标题栏依次是：新建会话、刷新、过滤、清除过滤。
 
 会话列表来自 `codex app-server`：扩展在首次需要数据时才拉起这个子进程，并在扩展停用时关掉它。
@@ -42,10 +43,13 @@ Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切�
 | `codexHelper.refresh` | Codex: 刷新会话列表 | 视图标题栏 |
 | `codexHelper.setFilter` | Codex: 过滤会话 | 视图标题栏 |
 | `codexHelper.clearFilter` | Codex: 清除过滤 | 视图标题栏 |
-| `codexHelper.openSession` | Codex: 打开会话 | 单击节点 / 右键 |
+| `codexHelper.openSession` | Codex: 打开会话 | 单击节点 / 右键菜单 |
 | `codexHelper.renameSession` | Codex: 重命名会话 | 右键菜单 |
 | `codexHelper.pinSession` | Codex: 置顶会话 | 右键菜单 |
 | `codexHelper.unpinSession` | Codex: 取消置顶 | 右键菜单（已置顶项） |
+| `codexHelper.archiveSession` | Codex: 归档会话 | 悬停按钮（未归档条目） |
+| `codexHelper.unarchiveSession` | Codex: 取消归档 | 右键菜单（已归档条目） |
+| `codexHelper.deleteSession` | Codex: 删除会话 | 悬停按钮（已归档条目） |
 | `codexHelper.loadMore` | Codex: 加载更多 | 命令面板 |
 
 ## 配置
@@ -62,10 +66,11 @@ Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切�
 
 ## 工作原理
 
-- **数据源**：以 stdio 启动 `codex app-server`，走 NDJSON JSON-RPC，使用 `thread/list`、`thread/loaded/list`、`thread/name/set`、`thread/turns/list` 四个方法。
-- **打开会话**：构造 Codex 内部的会话 URI（`openai-codex://route/local/<id>`），用 `vscode.openWith` 交给 `chatgpt.conversationEditor`。Codex 的自定义编辑器不允许同一文档开多个编辑器，所以「聚焦已打开的」和「打开已关闭的」是同一次调用。
+- **数据源**：以 stdio 启动 `codex app-server`，走 NDJSON JSON-RPC，使用 `thread/list`（按 `archived` 分别拉未归档与已归档两批）、`thread/loaded/list`、`thread/name/set`、`thread/turns/list`、`thread/archive`、`thread/unarchive`、`thread/delete` 七个方法。
+- **打开会话**：构造 Codex 内部的会话 URI（`openai-codex://route/local/<id>`），用 `vscode.openWith` 交给 `chatgpt.conversationEditor`。已经开着标签的条目改用**那个标签自己的 resource**（含它的 query / remote 前缀）去打开——Codex 的自定义编辑器不允许同一文档开多个编辑器，所以这是「聚焦已有标签」而不是新建；「已归档」的条目先调一次 `thread/unarchive`（对齐 Codex 面板里的「取消归档并打开」），失败只报错、仍然打开。
 - **新建会话**：同样走 `vscode.openWith`，打开 Codex 的 new-panel 路由 `/extension/panel/new`，但每次额外带一个 `?newPanel=<随机值>` 的 query。Codex 自己的 `chatgpt.newCodexPanel` 用的是固定 resource，在「同一文档只允许一个编辑器」的限制下连点只会聚焦同一个标签；换个 query 等于换个 resource，才能真正多开。
-- **已打开分组**：扫描 `window.tabGroups`，识别 view type 为 `chatgpt.conversationEditor` 的标签页并解析出会话 id；还没绑定会话的新面板也会作为未命名会话列出。
+- **标签只作为标记**：扫描 `window.tabGroups`，识别 view type 为 `chatgpt.conversationEditor` 的标签页并解析出会话 id。标签**不再产生独立的行**——它只给对应会话行打「已打开」标记（窗口图标）并带上该标签自己的 resource。还没绑定会话的新面板解析不出会话 id，直接跳过（因此空白面板不进侧边栏，点 `+` 后请到编辑器标签栏找它）。
+- **归档与删除**：归档 = `thread/archive`，取消归档 = `thread/unarchive`，删除 = `thread/delete`（不可恢复）。归档只是个标记，不动标签页；删除成功后本扩展会关掉显示该会话的标签页——本扩展与 Codex 各跑一个 app-server 子进程，删除通知不会跨进程送达 Codex 那侧的 webview，留着标签会让它继续去读一个已删除的会话。
 - **二进制解析**：`codexHelper.codexExecutable` → `chatgpt.cliExecutable` → `<codex 扩展>/bin/<os>-<arch>/codex`，与 Codex 扩展自身的解析顺序保持一致。
 - **运行状态判定**：某个会话「正在跑」的判据是「最新回合没有终止记录」**且**「它的 rollout 文件被存活的 codex app-server 进程持有」。Linux 上归属探测通过扫描 `/proc/<pid>/fd` 得到，不依赖时间阈值，长思考的回合不会被误判为已停止；macOS / Windows 无法探测归属，退化为「最近 `runningStaleSeconds` 秒内有过写入」的时间近似。扩展监听 rollout 文件的写入来即时重算，监听建立失败时用 `runningPollSeconds` 轮询兜底。
 
@@ -74,6 +79,9 @@ Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切�
 - 置顶信息保存在本扩展的 `globalState`：Codex 协议里没有可写的槽位（`thread/metadata/update` 只能改 `gitInfo`）。因此置顶不会同步到 TUI 或其他机器。
 - 置顶的会话如果在服务端已不存在，会被静默丢弃，不会留下空行。
 - 「加载更多」目前只在命令面板里，树底部没有额外的按钮节点。
+- 「已归档」分组只加载一页（`codexHelper.pageSize`，默认 50 条），不参与「加载更多」；归档数量很大时该组显示不全。
+- 删除（`thread/delete`）不可恢复，且不弹确认框：删除入口只出现在「已归档」分组里，要误删得先归档再展开该组。归档可用 `thread/unarchive`（右键「取消归档」，或直接点开该条目）恢复。
+- 侧边栏无法知道「某个空白面板正在显示哪个会话」：Codex 的 webview 在面板内新建会话时只做内部路由跳转，不改标签的 resource（上游自己的 chat session provider 也拿不到这个映射）。所以面板里开始的会话在侧边栏表现为「最近」/「历史」里的一行，而不是与那个面板绑定的一行。
 - 打开会话失败时只报错，不会退回「新建空会话」——那样看起来像成功，实际会丢掉用户的对话。
 - 「新建会话」复刻了 Codex 的 new-panel 路由与 `newPanel` query（见「工作原理」）。如果 Codex 升级后改了这条路由、或不再容忍 query，症状是 `+` 开出一个空白/异常页面；此时应改回委派 `chatgpt.newCodexPanel`（代价是只能开一个）。
 - 回退到 Codex 自带二进制时，只支持 `x64` / `arm64` 架构上的 Windows、macOS 和类 Unix 系统；其他平台请用 `codexHelper.codexExecutable` 显式指定路径。
