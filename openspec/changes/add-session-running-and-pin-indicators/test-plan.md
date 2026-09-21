@@ -10,17 +10,17 @@
   状态后缀可选（行尾追加）：🔴 RED / ✅ PASS / ⬜ TODO / ❌ FAIL；build 逐任务更新。
 -->
 
-T-001: `test/unit/runningState.test.ts::marks_running_when_turn_in_progress_and_owner_alive`
-T-002: `test/unit/runningState.test.ts::marks_running_when_interrupted_without_completed_at_and_owner_alive`
-T-003: `test/unit/runningState.test.ts::not_running_when_latest_turn_has_terminal_record`
-T-004: `test/unit/runningState.test.ts::not_running_when_no_live_owner_holds_rollout`
-T-005: `test/unit/runningState.test.ts::stale_mtime_does_not_clear_running_when_owner_alive`
-T-006: `test/unit/runningState.test.ts::not_running_when_thread_has_no_turns`
-T-007: `test/unit/runningState.test.ts::missing_rollout_path_is_not_running_and_does_not_throw`
-T-008: `test/unit/runningState.test.ts::turn_query_failure_isolates_to_that_session`
-T-009: `test/unit/runningState.test.ts::fallback_marks_running_within_stale_threshold`
-T-010: `test/unit/runningState.test.ts::fallback_clears_running_beyond_stale_threshold`
-T-011: `test/unit/runningState.test.ts::candidates_exclude_sessions_not_held_by_any_process`
+T-001: `test/unit/runningState.test.ts::marks_running_when_turn_in_progress_and_owner_alive` 🔴 RED ✅ PASS
+T-002: `test/unit/runningState.test.ts::marks_running_when_interrupted_without_completed_at_and_owner_alive` 🔴 RED ✅ PASS
+T-003: `test/unit/runningState.test.ts::not_running_when_latest_turn_has_terminal_record` 🔴 RED ✅ PASS
+T-004: `test/unit/runningState.test.ts::not_running_when_no_live_owner_holds_rollout` 🔴 RED ✅ PASS
+T-005: `test/unit/runningState.test.ts::stale_mtime_does_not_clear_running_when_owner_alive` 🔴 RED ✅ PASS
+T-006: `test/unit/runningState.test.ts::not_running_when_thread_has_no_turns` 🔴 RED ✅ PASS
+T-007: `test/unit/runningState.test.ts::missing_rollout_path_is_not_running_and_does_not_throw` 🔴 RED ✅ PASS
+T-008: `test/unit/runningState.test.ts::turn_query_failure_isolates_to_that_session` 🔴 RED ✅ PASS
+T-009: `test/unit/runningState.test.ts::fallback_marks_running_within_stale_threshold` 🔴 RED ✅ PASS
+T-010: `test/unit/runningState.test.ts::fallback_clears_running_beyond_stale_threshold` 🔴 RED ✅ PASS
+T-011: `test/unit/runningState.test.ts::candidates_exclude_sessions_not_held_by_any_process` 🔴 RED ✅ PASS
 T-012: `test/unit/threadApi.test.ts::list_turns_requests_latest_turn_in_descending_order` 🔴 RED ✅ PASS
 T-013: `test/unit/processScan.test.ts::maps_rollout_file_to_holding_codex_process` 🔴 RED ✅ PASS
 T-014: `test/unit/processScan.test.ts::ignores_rollout_fd_held_by_non_codex_process` 🔴 RED ✅ PASS
@@ -39,7 +39,7 @@ T-026: `test/unit/treeProvider.test.ts::running_session_uses_spinner_icon`
 T-027: `test/unit/treeProvider.test.ts::pinned_session_description_starts_with_pin_marker`
 T-028: `test/unit/treeProvider.test.ts::open_and_pinned_item_context_value_is_pinned`
 T-029: `test/unit/runningTracker.test.ts::stale_recompute_results_are_discarded`
-INV-001: `test/unit/runningState.test.ts::running_iff_no_terminal_record_and_owner_alive` covers T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010
+INV-001: `test/unit/runningState.test.ts::running_iff_no_terminal_record_and_owner_alive` covers T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010 🔴 RED ✅ PASS
 INV-002: `test/unit/sessionStore.test.ts::group_membership_matrix_holds_for_all_combinations` covers T-022, T-023
 
 ## 不变量说明

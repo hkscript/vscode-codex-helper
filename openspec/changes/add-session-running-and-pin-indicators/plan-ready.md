@@ -48,7 +48,7 @@
 - 测试先行：先写 `test/unit/runningState.test.ts::marks_running_when_turn_in_progress_and_owner_alive`；INV-001 最后写，遍历 design §6.1 全组合并带遍历计数护栏
 - 验证方式：`pnpm test -- runningState` 先红后绿；INV-001 断言 running / 非 running 的格数与 design §6.1 表一致
 - 确定性：[Verified]（判定谓词的每条编码都由 proposal 的 probe 实测支撑）
-- [ ] 运行状态纯函数
+- [x] 运行状态纯函数
 
 ### Task 4: 分组规则改为非互斥并透传运行标记
 - 目标：`buildSessionGroups` 的 `taken` 降级为「历史组排除集」，pinned 段不再被 open 掏空；新增 `runningIds` 入参落到 `SessionItem.running`
