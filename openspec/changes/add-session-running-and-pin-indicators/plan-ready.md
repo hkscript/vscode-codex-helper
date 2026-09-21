@@ -106,7 +106,7 @@
 - 验证方式：只跑 treeProvider 单测（`npx vitest run` + 该测试文件路径）先红后绿；随后 `pnpm test` 全量绿、`pnpm typecheck`、`pnpm build` 通过
 - ⚠️ T-027 的 `🔴 RED` 凭据已在 amend 中清除——断言重写后必须重新走一次 Step 2（见到红）才能标 PASS
 - 确定性：[Verified]（`SessionItem.cwd` 已存在于 `src/codex/types.ts:76`，由 `src/session/sessionStore.ts:76` 填充，无需改类型或 API）
-- [ ] 条目描述由首条消息改为会话目录
+- [x] 条目描述由首条消息改为会话目录
 
 ## 依赖顺序
 

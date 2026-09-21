@@ -48,6 +48,20 @@ export interface SessionTreeProvider {
   onDidChangeTreeData(listener: () => void): { dispose(): void };
 }
 
+/**
+ * Last segment of a session's working directory.
+ *
+ * The sidebar is narrow and `description` truncates from the right, so a full
+ * path loses exactly the part that tells sessions apart (design D26). Accepts
+ * both separators and ignores a trailing one; the root directory and the empty
+ * string have no meaningful last segment and yield `undefined` (D27).
+ */
+export function cwdBasename(cwd: string | null | undefined): string | undefined {
+  if (!cwd) return undefined;
+  const segments = cwd.split(/[/\\]+/).filter((segment) => segment.length > 0);
+  return segments.at(-1);
+}
+
 export function createSessionTreeProvider(
   deps: SessionTreeProviderDeps,
 ): SessionTreeProvider {
@@ -81,9 +95,10 @@ export function createSessionTreeProvider(
       : session.open
         ? ('session.open' as const)
         : ('session' as const);
-    const preview = session.preview === session.label ? undefined : session.preview;
+    const base = cwdBasename(session.cwd);
     // 图标位归运行状态，置顶只能占 description 前缀（D21）。
-    const description = session.pinned ? `📌 ${preview ?? ''}`.trimEnd() : preview;
+    // 没有目录时 trimEnd 掉 `📌 ` 的尾随空格（D27）。
+    const description = session.pinned ? `📌 ${base ?? ''}`.trimEnd() : base;
     return {
       kind: 'session',
       // 同一会话可能同时出现在已打开与置顶两组；id 不带分组段会让

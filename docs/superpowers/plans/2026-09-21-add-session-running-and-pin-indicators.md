@@ -1833,7 +1833,7 @@ Task 1–7 已完成并 commit。以下为 amend 追加的 Task 8。规格依据
 
 **约定：** `cwdBasename` 同时吃 `/` 与 `\` 分隔符、忽略尾随分隔符；根目录与空串返回 `undefined`（等同「没有目录部分」）。`description` = `pinned ? \`📌 ${base ?? ''}\`.trimEnd() : base`。
 
-- [ ] **Step 1: 重写 T-027 + 写 T-030 / T-031**
+- [x] **Step 1: 重写 T-027 + 写 T-030 / T-031**
 
 `pinned_session_description_starts_with_pin_marker` 改为：
 
@@ -1948,7 +1948,7 @@ INV-003（最后写）：
   });
 ```
 
-- [ ] **Step 2: 运行测试确认 FAIL（红）**
+- [x] **Step 2: 运行测试确认 FAIL（红）**
 
 Run: `npx vitest run test/unit/treeProvider.test.ts`
 
@@ -1956,7 +1956,7 @@ Run: `npx vitest run test/unit/treeProvider.test.ts`
 
 INV-003 此时必须在**多个**格子上报失败——只红一格说明矩阵没跑满。
 
-- [ ] **Step 3: 写最小实现**
+- [x] **Step 3: 写最小实现**
 
 `src/ui/treeProvider.ts`：
 
@@ -1985,21 +1985,26 @@ export function cwdBasename(cwd: string | null | undefined): string | undefined 
     const description = session.pinned ? `📌 ${base ?? ''}`.trimEnd() : base;
 ```
 
-- [ ] **Step 4: 运行测试确认 PASS（绿）**
+- [x] **Step 4: 运行测试确认 PASS（绿）**
 
 Run: `npx vitest run test/unit/treeProvider.test.ts` → 10 passed
 Run: `pnpm test` → 全量绿；`pnpm typecheck`、`pnpm build` 通过
 
-- [ ] **Step 5: 更新状态文件**
+- [x] **Step 5: 更新状态文件**
 
 `test-plan.md` 的 T-027 / T-030 / T-031 / INV-003 行尾各追加 ` ✅ PASS`（T-027 同时清掉 `⚠️ 待更新` 标记）；`plan-ready.md` 的 Task 8 checkbox 改 `[x]`。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ui/treeProvider.ts test/unit/treeProvider.test.ts openspec/changes/add-session-running-and-pin-indicators/
 git commit -m "feat(ui): show the session directory instead of its first message"
 ```
+
+**执行偏差记录（Task 8，build 期）**：INV-003 的实际写法比本计划的草稿强两处，都是为了不让矩阵变成假绿——
+
+1. 草稿里每格的 `description` 是在测试内用 `` `📌 ${cwdBasename(...)}`.trimEnd() `` **重新算一遍**的，等于把被测的组装公式抄进测试。那样 `toItemNode` 的组装分支写错也测不出来，而尾随空格恰恰就出在那条分支上。实际改为走真实渲染路径（`createSessionTreeProvider` → `getChildren` → 取 `session.id === 't1'` 的节点），断言节点的 `description`。
+2. 草稿要求「RED 时必须在多个格子上报失败」，但硬断言会在第一格就中止，这条要求物理上无法满足。实际把逐格断言改为 `expect.soft`，RED 时 8 格 + 4 条 `cwdBasename` 全部报出（见 build 记录），遍历计数护栏仍用硬断言。
 
 ## 人工验收补充（amend 追加）
 

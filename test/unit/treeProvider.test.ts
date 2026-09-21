@@ -3,6 +3,7 @@ import type { SessionGroup } from '../../src/codex/types';
 import { buildSessionGroups } from '../../src/session/sessionStore';
 import {
   createSessionTreeProvider,
+  cwdBasename,
   type SessionGroupNode,
   type SessionItemNode,
 } from '../../src/ui/treeProvider';
@@ -149,8 +150,8 @@ describe('treeProvider', () => {
   it('pinned_session_description_starts_with_pin_marker', async () => {
     const groups = buildSessionGroups({
       threads: [
-        makeThread({ id: 'pin-1', name: '钉住的', preview: '钉住的预览' }),
-        makeThread({ id: 'plain', name: '普通的', preview: '普通的预览' }),
+        makeThread({ id: 'pin-1', name: '钉住的', preview: '钉住的预览', cwd: '/home/hk/meicai/order' }),
+        makeThread({ id: 'plain', name: '普通的', preview: '普通的预览', cwd: '/home/hk/github/codex-cli' }),
       ],
       openTabs: [],
       pinnedIds: ['pin-1'],
@@ -160,13 +161,106 @@ describe('treeProvider', () => {
     const history = await sessionNodes(groups, 'history');
 
     // 图标位被运行状态占着，置顶只能落在 description 上（D21）
-    expect(String(pinned.nodes[0]!.description).startsWith('📌')).toBe(true);
-    expect(String(pinned.nodes[0]!.description)).toContain('钉住的预览');
-    expect(String(pinned.provider.getTreeItem(pinned.nodes[0]!).description).startsWith('📌')).toBe(
-      true,
-    );
-    // 没置顶的条目不能平白多出一个图钉，但 description 本身要照旧保留
-    expect(String(history.nodes[0]!.description ?? '')).toBe('普通的预览');
+    expect(pinned.nodes[0]!.description).toBe('📌 order');
+    expect(pinned.provider.getTreeItem(pinned.nodes[0]!).description).toBe('📌 order');
+    // 没置顶的条目不能平白多出一个图钉，但目录照旧显示
+    expect(history.nodes[0]!.description).toBe('codex-cli');
+  });
+
+  it('description_shows_cwd_basename', async () => {
+    const groups = buildSessionGroups({
+      threads: [
+        makeThread({
+          id: 't1',
+          name: '价格排查',
+          preview: '帮我看看这个报价',
+          cwd: '/home/hk/meicai/price-research',
+        }),
+      ],
+      openTabs: [],
+      pinnedIds: [],
+    });
+
+    const { nodes } = await sessionNodes(groups, 'history');
+
+    // 侧边栏窄，description 从右侧截断——完整路径会把最有辨识度的尾部切掉（D26）
+    expect(nodes[0]!.description).toBe('price-research');
+    // 首条消息不再出现在右侧
+    expect(String(nodes[0]!.description)).not.toContain('帮我看看这个报价');
+  });
+
+  it('session_without_cwd_has_empty_description', async () => {
+    // 已打开的标签对应的会话不在 thread/list 里 ⇒ cwd 为 null
+    const groups = buildSessionGroups({
+      threads: [],
+      openTabs: [makeOpenTab('t8', '新会话'), makeOpenTab('t9', '钉住的新会话')],
+      pinnedIds: ['t9'],
+    });
+
+    const { nodes } = await sessionNodes(groups, 'open');
+    const descOf = (id: string) => nodes.find((node) => node.id.endsWith(id))!.description;
+
+    expect(descOf('t8')).toBeUndefined();
+    // 没有目录时置顶前缀不能拖着一个看不见的尾随空格（D27）
+    expect(descOf('t9')).toBe('📌');
+  });
+
+  // INV-003: design §6.3 的 (cwd 形态 × pinned) 8 格全组合
+  it('description_matrix_holds_for_all_cwd_and_pinned_combinations', async () => {
+    const cwds: Array<[string | null, string | undefined]> = [
+      ['/home/hk/github/vscode-codex-helper', 'vscode-codex-helper'],
+      ['/home/hk/github/vscode-codex-helper/', 'vscode-codex-helper'],
+      ['/', undefined],
+      [null, undefined],
+    ];
+    let withDir = 0;
+    let withoutDir = 0;
+
+    for (const [cwd, expectedBase] of cwds) {
+      // 先单独钉住取名函数本身，再钉住它被组装进 description 的结果。
+      // 逐格用 expect.soft：硬断言会在第一格就中止，矩阵是不是真的跑满 8 格
+      // 就看不出来了——而「只红一格」正是假绿的典型形状。
+      expect.soft(cwdBasename(cwd), `cwdBasename(${cwd})`).toBe(expectedBase);
+
+      for (const pinned of [true, false]) {
+        const groups = buildSessionGroups({
+          threads: [makeThread({ id: 't1', name: '目标会话', cwd: cwd ?? undefined })],
+          openTabs: cwd === null ? [makeOpenTab('t1', '目标会话')] : [],
+          pinnedIds: pinned ? ['t1'] : [],
+        });
+        // 走真实渲染路径：矩阵要盯住 toItemNode 的组装，而不是在测试里
+        // 把同一条公式再写一遍（那样 `📌 ${base}` 的尾随空格永远测不出来）
+        const provider = createSessionTreeProvider({ load: async () => groups });
+        const roots = await provider.getChildren();
+        const rendered = (await Promise.all(roots.map((root) => provider.getChildren(root))))
+          .flat()
+          .filter((node): node is SessionItemNode => node.kind === 'session')
+          .find((node) => node.session.id === 't1');
+        expect(rendered, `cwd=${cwd} pinned=${pinned} 没渲染出目标条目`).toBeDefined();
+        const description = rendered!.description;
+
+        // 独立推导的期望值：不复用被测实现的组装分支
+        const expected = pinned
+          ? expectedBase === undefined
+            ? '📌'
+            : `📌 ${expectedBase}`
+          : expectedBase;
+
+        expect.soft(description, `cwd=${cwd} pinned=${pinned}`).toBe(expected);
+        // 尾随空格在 UI 里看不见，只能靠完整相等断言钉死
+        expect.soft(String(description ?? ''), `cwd=${cwd} pinned=${pinned} 尾随空白`).toBe(
+          String(description ?? '').trimEnd(),
+        );
+
+        if (expectedBase === undefined) withoutDir += 1;
+        else withDir += 1;
+      }
+    }
+
+    // 反空转护栏：4 种 cwd 形态 × 2 种置顶状态 = 8 格，两类结论都要出现
+    expect(withDir + withoutDir).toBe(8);
+    expect(withDir).toBe(4);
+    expect(withoutDir).toBe(4);
   });
 
   it('open_and_pinned_item_context_value_is_pinned', async () => {
