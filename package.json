@@ -2,7 +2,7 @@
   "name": "vscode-codex-helper",
   "displayName": "Codex Helper",
   "description": "Browse, open, rename and pin Codex sessions from a sidebar tree view.",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "publisher": "hkscript",
   "license": "MIT",
   "icon": "resources/icon.png",
