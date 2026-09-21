@@ -70,7 +70,7 @@
 - 测试先行：先写 `test/unit/treeProvider.test.ts::same_session_gets_distinct_node_ids_per_group`
 - 验证方式：`pnpm test -- treeProvider` 先红后绿；人工核对 `package.json` 的 pin/unpin `when` 表达式在新 contextValue 下语义仍正确（D22，不改文件）
 - 确定性：[Verified]（依赖 Task 4 产出的双行分组）
-- [ ] 树条目的 id、图标、描述与 contextValue
+- [x] 树条目的 id、图标、描述与 contextValue
 
 ### Task 6: 运行状态追踪器（监听 + 去抖 + 轮询兜底）
 - 目标：实现 `createRunningTracker`：扫描 → 候选 → 查询 → 计算 → `fs.watch` 去抖重算；watch 抛错退化轮询；重入用代际号丢弃迟到结果；`dispose` 回收全部句柄

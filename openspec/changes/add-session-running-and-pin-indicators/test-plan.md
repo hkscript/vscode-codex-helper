@@ -34,10 +34,10 @@ T-021: `test/unit/runningTracker.test.ts::dispose_releases_all_watchers_and_time
 T-022: `test/unit/sessionStore.test.ts::pinned_session_stays_in_pinned_group_when_open` 🔴 RED ✅ PASS
 T-023: `test/unit/sessionStore.test.ts::unpinning_removes_pinned_row_but_keeps_open_row` 🔴 RED ✅ PASS
 T-024: `test/unit/sessionStore.test.ts::marks_sessions_present_in_running_set` 🔴 RED ✅ PASS
-T-025: `test/unit/treeProvider.test.ts::same_session_gets_distinct_node_ids_per_group`
-T-026: `test/unit/treeProvider.test.ts::running_session_uses_spinner_icon`
-T-027: `test/unit/treeProvider.test.ts::pinned_session_description_starts_with_pin_marker`
-T-028: `test/unit/treeProvider.test.ts::open_and_pinned_item_context_value_is_pinned`
+T-025: `test/unit/treeProvider.test.ts::same_session_gets_distinct_node_ids_per_group` 🔴 RED ✅ PASS
+T-026: `test/unit/treeProvider.test.ts::running_session_uses_spinner_icon` 🔴 RED ✅ PASS
+T-027: `test/unit/treeProvider.test.ts::pinned_session_description_starts_with_pin_marker` 🔴 RED ✅ PASS
+T-028: `test/unit/treeProvider.test.ts::open_and_pinned_item_context_value_is_pinned` 🔴 RED ✅ PASS
 T-029: `test/unit/runningTracker.test.ts::stale_recompute_results_are_discarded`
 INV-001: `test/unit/runningState.test.ts::running_iff_no_terminal_record_and_owner_alive` covers T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010 🔴 RED ✅ PASS
 INV-002: `test/unit/sessionStore.test.ts::group_membership_matrix_holds_for_all_combinations` covers T-022, T-023 🔴 RED ✅ PASS

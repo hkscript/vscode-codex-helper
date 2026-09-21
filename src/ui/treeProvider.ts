@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { SessionGroup, SessionItem } from '../codex/types';
+import type { SessionGroup, SessionGroupId, SessionItem } from '../codex/types';
 
 /**
  * TreeDataProvider for the session sidebar.
@@ -73,17 +73,24 @@ export function createSessionTreeProvider(
       : vscode.TreeItemCollapsibleState.Expanded;
   }
 
-  function toItemNode(session: SessionItem): SessionItemNode {
-    const contextValue = session.open
-      ? ('session.open' as const)
-      : session.pinned
-        ? ('session.pinned' as const)
+  function toItemNode(session: SessionItem, groupId: SessionGroupId): SessionItemNode {
+    // 置顶优先于已打开：右键菜单的语义锚点是「置顶与否」，
+    // 已打开且已置顶的条目必须给出「取消置顶」（D22）。
+    const contextValue = session.pinned
+      ? ('session.pinned' as const)
+      : session.open
+        ? ('session.open' as const)
         : ('session' as const);
+    const preview = session.preview === session.label ? undefined : session.preview;
+    // 图标位归运行状态，置顶只能占 description 前缀（D21）。
+    const description = session.pinned ? `📌 ${preview ?? ''}`.trimEnd() : preview;
     return {
       kind: 'session',
-      id: `session:${session.id}`,
+      // 同一会话可能同时出现在已打开与置顶两组；id 不带分组段会让
+      // VS Code 拿同一个 id 记两行的折叠/选中状态（D20）。
+      id: `session:${groupId}:${session.id}`,
       label: session.label,
-      description: session.preview === session.label ? undefined : session.preview,
+      description,
       contextValue,
       session,
     };
@@ -104,7 +111,7 @@ export function createSessionTreeProvider(
   return {
     async getChildren(element?: SessionTreeNode): Promise<SessionTreeNode[]> {
       if (element?.kind === 'group') {
-        return element.group.sessions.map(toItemNode);
+        return element.group.sessions.map((session) => toItemNode(session, element.group.id));
       }
       if (element) return [];
 
@@ -144,7 +151,13 @@ export function createSessionTreeProvider(
         // `extension.ts` normalizes both shapes.
         arguments: [{ sessionId: node.session.id, label: node.label }],
       };
-      item.iconPath = new vscode.ThemeIcon(node.session.open ? 'window' : 'comment-discussion');
+      item.iconPath = new vscode.ThemeIcon(
+        node.session.running
+          ? 'loading~spin'
+          : node.session.open
+            ? 'window'
+            : 'comment-discussion',
+      );
       return item;
     },
 

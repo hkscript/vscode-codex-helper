@@ -1,8 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionGroup } from '../../src/codex/types';
 import { buildSessionGroups } from '../../src/session/sessionStore';
-import { createSessionTreeProvider, type SessionGroupNode } from '../../src/ui/treeProvider';
-import { TreeItemCollapsibleState, makeOpenTab, makeThread } from '../helpers/fakes';
+import {
+  createSessionTreeProvider,
+  type SessionGroupNode,
+  type SessionItemNode,
+} from '../../src/ui/treeProvider';
+import { ThemeIcon, TreeItemCollapsibleState, makeOpenTab, makeThread } from '../helpers/fakes';
+
+/** Renders one group's item nodes through the provider, the way the tree does. */
+async function sessionNodes(groups: SessionGroup[], groupId: string) {
+  const provider = createSessionTreeProvider({ load: async () => groups });
+  const roots = await provider.getChildren();
+  const group = roots.find(
+    (node): node is SessionGroupNode => node.kind === 'group' && node.group.id === groupId,
+  );
+  if (!group) throw new Error(`missing group node: ${groupId}`);
+  const children = await provider.getChildren(group);
+  const nodes = children.filter((node): node is SessionItemNode => node.kind === 'session');
+  expect(nodes, `${groupId} 组没有渲染出会话条目`).toHaveLength(children.length);
+  return { provider, nodes };
+}
 
 function twoSessions(): SessionGroup[] {
   return buildSessionGroups({
@@ -91,19 +109,84 @@ describe('treeProvider', () => {
     expect(provider.getTreeItem(groupOf('history')).collapsibleState).toBe(TreeItemCollapsibleState.Collapsed);
   });
 
-  it('same_session_gets_distinct_node_ids_per_group', () => {
-    expect.fail('TODO: implement same_session_gets_distinct_node_ids_per_group');
+  it('same_session_gets_distinct_node_ids_per_group', async () => {
+    const groups = buildSessionGroups({
+      threads: [makeThread({ id: 'pin-1', name: '钉住又开着的' })],
+      openTabs: [makeOpenTab('pin-1', '钉住又开着的')],
+      pinnedIds: ['pin-1'],
+    });
+
+    const open = await sessionNodes(groups, 'open');
+    const pinned = await sessionNodes(groups, 'pinned');
+
+    // VS Code 按 TreeItem.id 记忆折叠/选中状态：两行同 id 会互相串台（D20）
+    expect(open.nodes[0]!.id).toBe('session:open:pin-1');
+    expect(pinned.nodes[0]!.id).toBe('session:pinned:pin-1');
+    expect(open.provider.getTreeItem(open.nodes[0]!).id).toBe('session:open:pin-1');
+    expect(pinned.provider.getTreeItem(pinned.nodes[0]!).id).toBe('session:pinned:pin-1');
   });
 
-  it('running_session_uses_spinner_icon', () => {
-    expect.fail('TODO: implement running_session_uses_spinner_icon');
+  it('running_session_uses_spinner_icon', async () => {
+    const groups = buildSessionGroups({
+      threads: [
+        makeThread({ id: 'busy', name: '正在跑' }),
+        makeThread({ id: 'idle', name: '闲着' }),
+      ],
+      openTabs: [],
+      pinnedIds: [],
+      runningIds: ['busy'],
+    });
+
+    const { provider, nodes } = await sessionNodes(groups, 'history');
+    const iconOf = (id: string) =>
+      provider.getTreeItem(nodes.find((node) => node.id.endsWith(id))!).iconPath as ThemeIcon;
+
+    expect(iconOf('busy').id).toBe('loading~spin');
+    // 非运行的条目图标不变，避免「全都在转」看不出区别
+    expect(iconOf('idle').id).toBe('comment-discussion');
   });
 
-  it('pinned_session_description_starts_with_pin_marker', () => {
-    expect.fail('TODO: implement pinned_session_description_starts_with_pin_marker');
+  it('pinned_session_description_starts_with_pin_marker', async () => {
+    const groups = buildSessionGroups({
+      threads: [
+        makeThread({ id: 'pin-1', name: '钉住的', preview: '钉住的预览' }),
+        makeThread({ id: 'plain', name: '普通的', preview: '普通的预览' }),
+      ],
+      openTabs: [],
+      pinnedIds: ['pin-1'],
+    });
+
+    const pinned = await sessionNodes(groups, 'pinned');
+    const history = await sessionNodes(groups, 'history');
+
+    // 图标位被运行状态占着，置顶只能落在 description 上（D21）
+    expect(String(pinned.nodes[0]!.description).startsWith('📌')).toBe(true);
+    expect(String(pinned.nodes[0]!.description)).toContain('钉住的预览');
+    expect(String(pinned.provider.getTreeItem(pinned.nodes[0]!).description).startsWith('📌')).toBe(
+      true,
+    );
+    // 没置顶的条目不能平白多出一个图钉，但 description 本身要照旧保留
+    expect(String(history.nodes[0]!.description ?? '')).toBe('普通的预览');
   });
 
-  it('open_and_pinned_item_context_value_is_pinned', () => {
-    expect.fail('TODO: implement open_and_pinned_item_context_value_is_pinned');
+  it('open_and_pinned_item_context_value_is_pinned', async () => {
+    const groups = buildSessionGroups({
+      threads: [
+        makeThread({ id: 'pin-1', name: '钉住又开着的' }),
+        makeThread({ id: 'plain', name: '普通的' }),
+      ],
+      openTabs: [makeOpenTab('pin-1', '钉住又开着的'), makeOpenTab('open-only', '只开着的')],
+      pinnedIds: ['pin-1'],
+    });
+
+    const open = await sessionNodes(groups, 'open');
+    const history = await sessionNodes(groups, 'history');
+    const contextOf = (nodes: typeof open.nodes, id: string) =>
+      nodes.find((node) => node.id.endsWith(id))!.contextValue;
+
+    // package.json 的 unpin 菜单挂在 session.pinned 上：已打开且已置顶必须给「取消置顶」（D22）
+    expect(contextOf(open.nodes, 'pin-1')).toBe('session.pinned');
+    expect(contextOf(open.nodes, 'open-only')).toBe('session.open');
+    expect(contextOf(history.nodes, 'plain')).toBe('session');
   });
 });
