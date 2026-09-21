@@ -38,18 +38,6 @@ describe('sessionStore', () => {
     expect(groups.map((group) => group.label)).toEqual(['已打开', '置顶', '历史']);
   });
 
-  it('open_group_wins_over_pinned_group', () => {
-    const groups = buildSessionGroups({
-      threads,
-      openTabs: [makeOpenTab('pin-1', '置顶一')],
-      pinnedIds: ['pin-1'],
-    });
-
-    expect(ids(groups, 'open')).toEqual(['pin-1']);
-    expect(groups.find((group) => group.id === 'pinned')).toBeUndefined();
-    expect(occurrences(groups, 'pin-1')).toBe(1);
-  });
-
   it('hides_empty_groups', () => {
     const onlyHistory = buildSessionGroups({
       threads: [threads[0]!],
@@ -133,43 +121,6 @@ describe('sessionStore', () => {
     expect(ids(withNewPanel, 'open')).toHaveLength(2);
   });
 
-  it('every_session_appears_in_exactly_one_group', () => {
-    const target = 's1';
-    let visible = 0;
-    let dropped = 0;
-
-    for (const hasOpenTab of [true, false]) {
-      for (const pinned of [true, false]) {
-        for (const inThreadList of [true, false]) {
-          const groups = buildSessionGroups({
-            threads: inThreadList
-              ? [makeThread({ id: target, name: '目标会话' }), threads[0]!]
-              : [threads[0]!],
-            openTabs: hasOpenTab ? [makeOpenTab(target, '目标会话'), makeOpenTab('other', '其他')] : [],
-            pinnedIds: pinned ? [target] : [],
-          });
-
-          const seen = occurrences(groups, target);
-          expect(seen, `hasOpenTab=${hasOpenTab} pinned=${pinned} inThreadList=${inThreadList}`).toBeLessThanOrEqual(1);
-
-          // 正空间断言：有标签页或在服务端列表里 ⇒ 必须恰好出现一次
-          if (hasOpenTab || inThreadList) {
-            expect(seen, `组合 (${hasOpenTab},${pinned},${inThreadList}) 应当可见`).toBe(1);
-            visible += 1;
-          } else {
-            // 只被置顶、服务端与标签页都查无此人 ⇒ 幽灵条目必须丢弃
-            expect(seen, `组合 (${hasOpenTab},${pinned},${inThreadList}) 应当丢弃`).toBe(0);
-            dropped += 1;
-          }
-        }
-      }
-    }
-
-    // 防止上面的循环被写成永远不进循环的假绿
-    expect(visible).toBe(6);
-    expect(dropped).toBe(2);
-  });
-
   it('every_rendered_session_matches_active_filter', () => {
     const keywords = ['', '历史', 'OPEN-1', 'zzz-不存在的关键词'];
     let rendered = 0;
@@ -222,19 +173,116 @@ describe('sessionStore', () => {
   });
 
   it('pinned_session_stays_in_pinned_group_when_open', () => {
-    expect.fail('TODO: implement pinned_session_stays_in_pinned_group_when_open');
+    const groups = buildSessionGroups({
+      threads,
+      openTabs: [makeOpenTab('pin-1', '置顶一')],
+      pinnedIds: ['pin-1'],
+    });
+
+    // 本次语义翻转（design §6.2 第 1 行）：打开一个置顶会话不再把它从置顶组掏空
+    expect(ids(groups, 'open')).toEqual(['pin-1']);
+    expect(ids(groups, 'pinned')).toEqual(['pin-1']);
+    expect(occurrences(groups, 'pin-1')).toBe(2);
+    // 历史组仍与另两组互斥
+    expect(ids(groups, 'history')).toEqual(['hist-1', 'hist-2', 'open-1']);
+
+    const pinnedRow = groups.find((group) => group.id === 'pinned')!.sessions[0]!;
+    const openRow = groups.find((group) => group.id === 'open')!.sessions[0]!;
+    // 两行都得如实说出「这个会话既开着又被置顶」，否则条目上看不出置顶
+    expect(pinnedRow.pinned).toBe(true);
+    expect(openRow.pinned).toBe(true);
+    expect(pinnedRow.open).toBe(true);
+    expect(openRow.open).toBe(true);
   });
 
   it('unpinning_removes_pinned_row_but_keeps_open_row', () => {
-    expect.fail('TODO: implement unpinning_removes_pinned_row_but_keeps_open_row');
+    const before = buildSessionGroups({
+      threads,
+      openTabs: [makeOpenTab('pin-1', '置顶一')],
+      pinnedIds: ['pin-1'],
+    });
+    expect(occurrences(before, 'pin-1')).toBe(2);
+
+    const after = buildSessionGroups({
+      threads,
+      openTabs: [makeOpenTab('pin-1', '置顶一')],
+      pinnedIds: [],
+    });
+
+    // 取消置顶：置顶组那行消失，已打开那行保留且不再带置顶标记
+    expect(after.find((group) => group.id === 'pinned')).toBeUndefined();
+    expect(ids(after, 'open')).toEqual(['pin-1']);
+    expect(after.find((group) => group.id === 'open')!.sessions[0]!.pinned).toBe(false);
+    expect(occurrences(after, 'pin-1')).toBe(1);
   });
 
   it('marks_sessions_present_in_running_set', () => {
-    expect.fail('TODO: implement marks_sessions_present_in_running_set');
+    const groups = buildSessionGroups({
+      threads,
+      openTabs: [makeOpenTab('open-1', '已打开一')],
+      pinnedIds: ['pin-1'],
+      runningIds: ['open-1', 'hist-2'],
+    });
+
+    const rows = groups.flatMap((group) => group.sessions);
+    const runningIds = rows.filter((session) => session.running).map((session) => session.id).sort();
+
+    expect(runningIds).toEqual(['hist-2', 'open-1']);
+    // running 必须是明确的布尔值，不能是 undefined 蒙混过去
+    for (const session of rows) {
+      expect(typeof session.running, `${session.id}.running`).toBe('boolean');
+    }
   });
 
-  // INV-002: design §6.2 全组合遍历（取代 every_session_appears_in_exactly_one_group）
+  // INV-002: design §6.2 的 (hasOpenTab × pinned × inThreadList) 8 格全组合
   it('group_membership_matrix_holds_for_all_combinations', () => {
-    expect.fail('TODO: implement group_membership_matrix_holds_for_all_combinations');
+    const target = 's1';
+    let checked = 0;
+    let openRows = 0;
+    let pinnedRows = 0;
+    let historyRows = 0;
+
+    for (const hasOpenTab of [true, false]) {
+      for (const pinned of [true, false]) {
+        for (const inThreadList of [true, false]) {
+          const groups = buildSessionGroups({
+            threads: inThreadList
+              ? [makeThread({ id: target, name: '目标会话' }), threads[0]!]
+              : [threads[0]!],
+            openTabs: hasOpenTab
+              ? [makeOpenTab(target, '目标会话'), makeOpenTab('other', '其他')]
+              : [],
+            pinnedIds: pinned ? [target] : [],
+          });
+
+          const label = `(open=${hasOpenTab}, pinned=${pinned}, listed=${inThreadList})`;
+          // 独立推导的期望：已打开看标签页；置顶还要求服务端查得到（D8 幽灵置顶丢弃）；
+          // 历史 = 服务端有 且 既没打开也没置顶
+          const inOpen = hasOpenTab;
+          const inPinned = pinned && inThreadList;
+          const inHistory = inThreadList && !inOpen && !inPinned;
+
+          expect(ids(groups, 'open').includes(target), `${label} open`).toBe(inOpen);
+          expect(ids(groups, 'pinned').includes(target), `${label} pinned`).toBe(inPinned);
+          expect(ids(groups, 'history').includes(target), `${label} history`).toBe(inHistory);
+          // 历史组与另两组仍然互斥——这条不变量本次没有被推翻
+          expect(inHistory && (inOpen || inPinned), `${label} 历史组互斥`).toBe(false);
+          expect(occurrences(groups, target), `${label} 行数`).toBe(
+            Number(inOpen) + Number(inPinned) + Number(inHistory),
+          );
+
+          checked += 1;
+          openRows += Number(inOpen);
+          pinnedRows += Number(inPinned);
+          historyRows += Number(inHistory);
+        }
+      }
+    }
+
+    // 反空转护栏：8 格必须全部跑到，且三种归属都真的出现过
+    expect(checked).toBe(8);
+    expect(openRows).toBe(4);
+    expect(pinnedRows).toBe(2);
+    expect(historyRows).toBe(1);
   });
 });

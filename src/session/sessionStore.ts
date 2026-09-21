@@ -3,8 +3,9 @@ import type { OpenTab, SessionGroup, SessionGroupId, SessionItem, Thread } from 
 /**
  * Merges the three session sources into the tree's groups.
  *
- * Design decisions encoded here (design.md D7/D8):
- *  - group priority open > pinned > history, a session appears in exactly one;
+ * Design decisions encoded here (design.md D7/D8/D19):
+ *  - 已打开 and 置顶 may both contain the same session — pinning survives
+ *    opening (D19). 历史 stays mutually exclusive with both;
  *  - a pinned id that exists neither in the thread list nor as an open tab is a
  *    stale pin and is dropped (no ghost rows);
  *  - every rendered group is filtered with the same predicate, so "everything
@@ -27,6 +28,7 @@ export interface BuildSessionGroupsInput {
   threads: Thread[];
   openTabs: OpenTab[];
   pinnedIds: string[];
+  runningIds?: Iterable<string> | null;
   filter?: string | null;
 }
 
@@ -57,7 +59,9 @@ export function buildSessionGroups(input: BuildSessionGroupsInput): SessionGroup
 
   const threadsById = new Map(threads.map((thread) => [thread.id, thread]));
   const pinnedSet = new Set(pinnedIds);
-  const taken = new Set<string>();
+  const runningSet = new Set(input.runningIds ?? []);
+  // 只管「历史组要排除谁」。已打开与置顶可以同时命中同一个会话（D19）。
+  const claimed = new Set<string>();
 
   function toItem(
     id: string,
@@ -73,35 +77,40 @@ export function buildSessionGroups(input: BuildSessionGroupsInput): SessionGroup
       updatedAt: thread?.updatedAt ?? null,
       pinned: pinnedSet.has(id),
       open,
-      running: false,
+      running: runningSet.has(id),
     };
   }
 
   // 1. 已打开：标签页顺序即显示顺序。未绑定会话的新建标签用合成 id 占位，
-  //    好让「同一 id 只出现一次」这条不变量不会被两个同名新标签破坏。
+  //    好让同一分组内「一个 id 只出现一次」不会被两个同名新标签破坏。
   const open: SessionItem[] = [];
+  const openIds = new Set<string>();
   openTabs.forEach((tab: OpenTab, index: number) => {
     const id = tab.id ?? `open-tab:${index}`;
-    if (taken.has(id)) return;
-    taken.add(id);
+    if (openIds.has(id)) return;
+    openIds.add(id);
+    claimed.add(id);
     open.push(toItem(id, tab.id ? threadsById.get(tab.id) : undefined, tab.tabLabel, true));
   });
 
-  // 2. 置顶：已打开的不再重复；服务端与标签页都查不到的陈旧置顶直接丢弃。
+  // 2. 置顶：不再因为「已打开」而跳过（D19）；服务端查不到的陈旧置顶仍然丢弃（D8）。
   const pinned: SessionItem[] = [];
+  const pinnedSeen = new Set<string>();
   for (const id of pinnedIds) {
-    if (taken.has(id)) continue;
+    if (pinnedSeen.has(id)) continue;
     const thread = threadsById.get(id);
     if (!thread) continue;
-    taken.add(id);
-    pinned.push(toItem(id, thread, null, false));
+    pinnedSeen.add(id);
+    claimed.add(id);
+    // open 如实反映状态：同一会话的两行都该说出「它开着」。
+    pinned.push(toItem(id, thread, null, openIds.has(id)));
   }
 
-  // 3. 历史：剩下的全部。
+  // 3. 历史：既没打开也没置顶的全部。
   const history: SessionItem[] = [];
   for (const thread of threads) {
-    if (taken.has(thread.id)) continue;
-    taken.add(thread.id);
+    if (claimed.has(thread.id)) continue;
+    claimed.add(thread.id);
     history.push(toItem(thread.id, thread, null, false));
   }
 

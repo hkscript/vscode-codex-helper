@@ -59,7 +59,7 @@
 - 测试先行：先写 `test/unit/sessionStore.test.ts::pinned_session_stays_in_pinned_group_when_open`（当前实现下必红）；同一提交内删除 `open_group_wins_over_pinned_group`、把 `every_session_appears_in_exactly_one_group` 重写为 INV-002
 - 验证方式：`pnpm test -- sessionStore` 先红后绿；确认「幽灵置顶丢弃」与「历史组互斥」两条既有行为在 INV-002 中仍为真
 - 确定性：[Verified]
-- [ ] 分组规则改为非互斥并透传运行标记
+- [x] 分组规则改为非互斥并透传运行标记
 
 ### Task 5: 树条目的 id、图标、描述与 contextValue
 - 目标：节点 id 加分组段、running 用 `loading~spin` 图标、pinned 在 description 加 `📌`、contextValue 改为 pinned 优先
