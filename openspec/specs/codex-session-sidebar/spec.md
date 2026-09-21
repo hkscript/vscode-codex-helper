@@ -481,53 +481,42 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 - **WHEN** 请求各分组节点的 TreeItem
 - **THEN** 「已打开」与「置顶」分组的 `collapsibleState` 为 `Expanded`，「历史」分组的 `collapsibleState` 为 `Collapsed`
 
-### Requirement: 新建会话（先建会话，再打开绑定标签）
+### Requirement: 新建会话（每次点击独立面板）
 
-插件 SHALL 提供一个「新建会话」命令：先通过 `thread/start` 建出一个会话（带上当前窗口第一个工作区目录作为 `cwd`；没有工作区目录时 SHALL 不传 `cwd`），再通过 `vscode.openWith` 打开由该会话 id 拼出的会话标签（scheme `openai-codex`、authority `route`、path `/local/<id>`），使标签从打开起就与会话绑定。建会话失败时 SHALL 提示错误且 SHALL NOT 打开任何标签；建会话成功但打开失败时 SHALL 删除刚建出的会话（清理失败 SHALL NOT 再叠加一条错误）。两种失败 SHALL NOT 把异常抛回命令层。
-
-插件 SHALL NOT 用 Codex 的 new-thread-panel 路由（`openai-codex://route/extension/panel/new`，即 `chatgpt.newCodexPanel` 的入口）来新建会话：那条路由开出的面板，文档 resource 永远停在 `/extension/panel/new`（Codex 的 webview 在面板内新建会话只做内部路由跳转），任何扩展都拿不到「面板 → 会话」映射，于是侧边栏认不出它、点击会话条目会重复开标签。
+插件 SHALL 提供一个「新建会话」命令，每次执行都通过 `vscode.openWith` 打开 Codex 的 new-thread-panel 路由（`openai-codex://route/extension/panel/new`）并携带一个**本次调用独有**的 `newPanel` query，使连续多次执行各自打开一个独立标签页；创建失败时 SHALL 提示错误，且 SHALL NOT 把异常抛回命令层。插件 SHALL NOT 再通过 `chatgpt.newCodexPanel` 委派新建——该入口固定使用同一个 resource，在 `supportsMultipleEditorsPerDocument: false` 下无法开出第二个标签。
 
 本命令与「会话打开与聚焦」中「打开失败不得回退新建」不冲突：那条约束限定的是**打开既有会话失败**时的行为，本条是**用户显式发起**的新建入口。
 
-#### Scenario: 先建会话再按会话 id 打开
+#### Scenario: 每次执行都打开带上本次调用独有 query 的新面板 URI
 
-- **GIVEN** `thread/start` 返回的会话 id 为 `t-new`
+- **GIVEN** `uriApi.file('/extension/panel/new')` 返回 scheme `openai-codex`、authority `route`、query 为空的基础 URI
+- **AND** 注入的 `createNonce()` 返回 `n1`
 - **WHEN** 执行 `codexHelper.newSession`
-- **THEN** 先发出一次 `thread/start`，再以该会话 id 打开标签（顺序不可颠倒）
+- **THEN** 调用 `vscode.openWith` 恰好一次，第一个参数是 scheme `openai-codex`、authority `route`、path `/extension/panel/new`、query `newPanel=n1` 的 URI，第二个参数为 `chatgpt.conversationEditor`，第三个参数 `preview` 为 `false`
 
-#### Scenario: 新会话带上当前工作区目录
+#### Scenario: 连续两次执行产生两个互不相同的 URI
 
-- **GIVEN** 当前窗口的第一个工作区目录为 `/home/u/proj`
-- **WHEN** 执行 `codexHelper.newSession`
-- **THEN** `thread/start` 的参数中 `cwd` 为 `/home/u/proj`
-
-#### Scenario: 没有工作区目录时不传 cwd
-
-- **GIVEN** 当前窗口没有打开任何工作区目录
-- **WHEN** 执行 `codexHelper.newSession`
-- **THEN** `thread/start` 的参数中不含 `cwd`
-
-#### Scenario: 连续两次执行各自建一个会话
-
-- **GIVEN** `thread/start` 依次返回 `t-1`、`t-2`
+- **GIVEN** 注入的 `createNonce()` 依次返回 `n1`、`n2`
 - **WHEN** 连续执行两次 `codexHelper.newSession`
-- **THEN** 两次打开标签分别使用会话 id `t-1` 与 `t-2`
+- **THEN** 两次传入 `vscode.openWith` 的 URI 不相等（即不是同一个 resource）
+- **AND** 两次的 URI path 都是 `/extension/panel/new`
+- **AND** 全程没有执行过 `chatgpt.newCodexPanel` 命令
 
-#### Scenario: 建会话失败时报错且不打开标签
+#### Scenario: 新建失败时提示错误
 
-- **GIVEN** `thread/start` 返回 error
+- **GIVEN** `vscode.openWith` 调用会抛出错误 `no custom editor registered for chatgpt.conversationEditor`
 - **WHEN** 执行 `codexHelper.newSession`
-- **THEN** 向用户展示含该错误原因的错误消息，且没有执行过 `vscode.openWith`
+- **THEN** 向用户展示含该错误原因的错误消息，且命令本身不抛出异常
 
-#### Scenario: 会话建好但打开失败时删掉它
+#### Scenario: 尚未绑定会话的新建标签以未命名项出现在「已打开」组
 
-- **GIVEN** `thread/start` 成功返回 `t-orphan`，而打开该会话的 `vscode.openWith` 抛出错误
-- **WHEN** 执行 `codexHelper.newSession`
-- **THEN** 发出一次 `thread/delete`（参数 `{threadId: 't-orphan'}`）
-- **AND** 命令层不再叠加第二条错误消息（打开失败的原因由 opener 报出）
+- **GIVEN** 已打开标签中有两个 `conversationId` 均为 `null` 的新建会话标签，标签标题均为 `New chat`
+- **AND** `thread/list` 返回的列表中不含这两个标签对应的会话
+- **WHEN** 构建树数据
+- **THEN** 两个标签都出现在「已打开」组，显示标题取自各自标签页的标题，且两项使用互不相同的合成 id（不因 id 都为 `null` 而互相覆盖）
 
-#### Scenario: 清理失败时不叠加错误
+#### Scenario: 带 query 的新面板 URI 不被误判为会话
 
-- **GIVEN** `thread/start` 成功，打开失败，且 `thread/delete` 也返回 error
-- **WHEN** 执行 `codexHelper.newSession`
-- **THEN** 命令本身不抛出异常，且只报出打开失败这一条错误
+- **GIVEN** URI 为 `openai-codex://route/extension/panel/new?newPanel=n1`
+- **WHEN** 解析该 URI 的会话 id
+- **THEN** 得到 `null`（该标签在树上表现为未命名的新建项，而不是某个会话）

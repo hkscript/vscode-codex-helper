@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync, readlinkSync, watch } from 'node:fs';
 import { access, copyFile, readFile, writeFile } from 'node:fs/promises';
 import { Script } from 'node:vm';
@@ -83,15 +84,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
   function workspaceCwd(): string | null {
     if (!configuration().get<boolean>('filterByWorkspaceCwd')) return null;
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
-  }
-
-  /**
-   * 新会话的工作目录：当前窗口第一个工作区目录。与 `workspaceCwd()`（那是「列表过滤」
-   * 开关）不同，这里不看配置——新建会话总要落到某个目录里；没有工作区时不传，交给
-   * app-server 用自己进程的 cwd。
-   */
-  function newSessionCwd(): string | null {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
   }
 
@@ -239,11 +231,12 @@ export function activate(context: vscode.ExtensionContext): void {
   const deleteSession = createDeleteSessionCommand({ threadApi: threadActions, showErrorMessage });
 
   const newSession = createNewSessionCommand({
-    // 先把会话建出来，再按会话 id 打开标签：这样标签从出生就与会话绑定（见 commands.ts）
-    startThread: () => api().startThread({ cwd: newSessionCwd() }),
-    openConversation: (threadId) => opener.openSession(threadId),
-    discardThread: (threadId) => api().deleteThread(threadId),
+    executeCommand: (command: string, ...args: unknown[]) =>
+      Promise.resolve(vscode.commands.executeCommand(command, ...args)),
     showErrorMessage,
+    // nonce 让每次点击落到不同的 resource —— 同一 resource 在 Codex 那边只会聚焦已有标签
+    uriApi: vscode.Uri,
+    createNonce: () => randomUUID(),
   });
 
   /**
