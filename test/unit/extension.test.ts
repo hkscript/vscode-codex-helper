@@ -12,6 +12,14 @@ vi.mock('node:child_process', async () => {
   return { spawn: () => child, __child: () => child };
 });
 
+// 归档/取消归档/删除的预检用的是同一份 /proc 归属扫描。测试里换成可控结果，
+// 免得依赖真实进程；默认「没人持有」，需要时用例自己填。
+const heldRollouts = vi.hoisted(() => ({ current: new Map<string, number>() }));
+vi.mock('../../src/session/processScan', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/session/processScan')>();
+  return { ...actual, scanHeldRollouts: () => heldRollouts.current };
+});
+
 const uriApi = createFakeUriApi();
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -108,6 +116,7 @@ describe('extension', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     refreshes = 0;
+    heldRollouts.current = new Map();
     // 让 `resolveCodexBinary` 直接返回配置值（否则它会因为「没有装 Codex 扩展」而抛错，
     // 命令根本走不到 app-server 调用）。
     (
@@ -138,6 +147,26 @@ describe('extension', () => {
       'chatgpt.conversationEditor',
       { preview: false },
     );
+  });
+
+  // REQ: 会话归档与删除 / Scenario: 预检命中「Codex 那侧持有」时连请求都不发（接线层）
+  it('archive_precheck_blocks_the_request_when_codex_holds_the_thread', async () => {
+    interceptTreeView();
+    activate(makeContext() as never);
+    heldRollouts.current = new Map([['t1', 30157]]);
+
+    await activatedHandler('codexHelper.archiveSession')({ sessionId: 't1' });
+
+    // 一次 app-server 往返都不该发生（那次往返必然被写者锁拒掉）
+    const child = await appServerChild();
+    const methods = child.written.map((line) => (JSON.parse(line) as { method: string }).method);
+    expect(methods).not.toContain('thread/archive');
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(1);
+    const message = String(
+      (vscode.window.showErrorMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0],
+    );
+    expect(message).toContain('无法归档这个会话');
+    expect(refreshes).toBe(0);
   });
 
   // REQ: 会话归档与删除 / Scenario: 删除只关闭被删会话自己的标签

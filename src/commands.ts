@@ -133,6 +133,11 @@ export interface SessionActionDeps {
   showErrorMessage(message: string): unknown;
   /** 失败提示里的动作名（「归档」「取消归档」「删除」）。 */
   actionLabel: string;
+  /**
+   * 预检：这个会话是否被**别的** codex app-server 进程持有（被持有就一定撞锁）。
+   * 可选：平台不支持探测（macOS / Windows）或没有接线时不预检，直接发请求。
+   */
+  isLockHeld?(threadId: string): Promise<boolean>;
 }
 
 /**
@@ -149,22 +154,32 @@ export function isActiveWriterError(reason: string): boolean {
   return /already has an active writer|already has a live local writer/i.test(reason);
 }
 
+/** 撞上写者锁（预检命中，或请求被拒）时给用户的唯一说明——预检和兜底共用同一句。 */
+export function writerLockMessage(actionLabel: string): string {
+  return `无法${actionLabel}这个会话：它被 Codex 那侧的 app-server 持有（打开过它，或它正在跑），本插件没法从外面改它。改用 Codex 自己的入口，或者 Reload Window 让 Codex 的 app-server 退出之后再试。`;
+}
+
 export function createSessionActionCommand(
   deps: SessionActionDeps,
 ): (node: { sessionId?: string } | undefined) => Promise<boolean> {
   return async function runSessionAction(node): Promise<boolean> {
     const sessionId = node?.sessionId;
     if (!sessionId) return false;
+
+    // 预检命中就别发了：这个请求只会被 Codex 那侧的写者锁拒掉
+    if (deps.isLockHeld && (await deps.isLockHeld(sessionId))) {
+      deps.showErrorMessage(writerLockMessage(deps.actionLabel));
+      return false;
+    }
+
     try {
       await deps.perform(sessionId);
       return true;
     } catch (error) {
       const reason = reasonOf(error);
       if (isActiveWriterError(reason)) {
-        // 如实说明，不给「关标签再试」这类假动作：锁在 Codex 那侧的 app-server 进程里
-        deps.showErrorMessage(
-          `${deps.actionLabel}会话失败：这个会话被 Codex 那侧的 app-server 持有（打开过它，或它正在跑），本插件没法从外面改它。可以改用 Codex 自己的入口，或者 Reload Window 让 Codex 的 app-server 退出之后再试。`,
-        );
+        // 预检漏掉的（探测失败、或刚好在这一刻被加载）走同一句说明
+        deps.showErrorMessage(writerLockMessage(deps.actionLabel));
         return false;
       }
       deps.showErrorMessage(`${deps.actionLabel}会话失败：${reason}`);
@@ -176,6 +191,7 @@ export function createSessionActionCommand(
 export interface ThreadActionCommandDeps {
   threadApi: { archiveThread(threadId: string): Promise<void> };
   showErrorMessage(message: string): unknown;
+  isLockHeld?(threadId: string): Promise<boolean>;
 }
 
 export function createArchiveSessionCommand(deps: ThreadActionCommandDeps) {
@@ -183,28 +199,33 @@ export function createArchiveSessionCommand(deps: ThreadActionCommandDeps) {
     perform: (threadId) => deps.threadApi.archiveThread(threadId),
     showErrorMessage: deps.showErrorMessage,
     actionLabel: '归档',
+    isLockHeld: deps.isLockHeld,
   });
 }
 
 export function createUnarchiveSessionCommand(deps: {
   threadApi: { unarchiveThread(threadId: string): Promise<void> };
   showErrorMessage(message: string): unknown;
+  isLockHeld?(threadId: string): Promise<boolean>;
 }) {
   return createSessionActionCommand({
     perform: (threadId) => deps.threadApi.unarchiveThread(threadId),
     showErrorMessage: deps.showErrorMessage,
     actionLabel: '取消归档',
+    isLockHeld: deps.isLockHeld,
   });
 }
 
 export function createDeleteSessionCommand(deps: {
   threadApi: { deleteThread(threadId: string): Promise<void> };
   showErrorMessage(message: string): unknown;
+  isLockHeld?(threadId: string): Promise<boolean>;
 }) {
   return createSessionActionCommand({
     perform: (threadId) => deps.threadApi.deleteThread(threadId),
     showErrorMessage: deps.showErrorMessage,
     actionLabel: '删除',
+    isLockHeld: deps.isLockHeld,
   });
 }
 

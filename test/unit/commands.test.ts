@@ -48,8 +48,8 @@ function resourceKey(uri: UriLike): string {
 }
 
 describe('commands', () => {
-  /** 三个会话动作命令共用：记录 RPC、可注入失败、记录错误提示。 */
-  function makeSessionActionDeps(options: { failWith?: Error } = {}) {
+  /** 三个会话动作命令共用：记录 RPC、可注入失败、可注入写者锁预检结果、记录错误提示。 */
+  function makeSessionActionDeps(options: { failWith?: Error; lockHeld?: boolean } = {}) {
     const calls: Array<{ method: string; threadId: string }> = [];
     const record = (method: string) =>
       vi.fn(async (threadId: string) => {
@@ -57,6 +57,7 @@ describe('commands', () => {
         calls.push({ method, threadId });
       });
     const showErrorMessage = vi.fn((_message: string) => undefined);
+    const isLockHeld = vi.fn(async (_threadId: string) => options.lockHeld ?? false);
     return {
       deps: {
         threadApi: {
@@ -65,9 +66,11 @@ describe('commands', () => {
           deleteThread: record('deleteThread'),
         },
         showErrorMessage,
+        isLockHeld,
       },
       calls,
       showErrorMessage,
+      isLockHeld,
     };
   }
 
@@ -214,8 +217,46 @@ describe('commands', () => {
     expect(showErrorMessage).toHaveBeenCalledTimes(1);
     const message = String(showErrorMessage.mock.calls[0]![0]);
     // 结论：跨进程拿不到锁，只能换入口或让 Codex 那侧的 app-server 退出
+    expect(message).toContain('无法归档这个会话');
     expect(message).toContain('被 Codex 那侧的 app-server 持有');
     expect(message).toContain('Reload Window');
+  });
+
+  // REQ: 会话归档与删除 / Scenario: 预检命中就不发那个注定被拒的请求
+  it('skips_the_request_when_the_precheck_finds_a_foreign_writer', async () => {
+    const { deps, calls, isLockHeld, showErrorMessage } = makeSessionActionDeps({ lockHeld: true });
+    const archiveSession = createArchiveSessionCommand(deps);
+
+    await expect(archiveSession({ sessionId: 't1' })).resolves.toBe(false);
+
+    expect(isLockHeld).toHaveBeenCalledWith('t1');
+    expect(calls).toEqual([]);
+    expect(showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(String(showErrorMessage.mock.calls[0]![0])).toContain('无法归档这个会话');
+  });
+
+  // 预检没命中（没被持有 / 平台不支持探测）时照常发请求
+  it('runs_the_action_when_the_precheck_passes', async () => {
+    const { deps, calls, showErrorMessage } = makeSessionActionDeps({ lockHeld: false });
+    const archiveSession = createArchiveSessionCommand(deps);
+
+    await expect(archiveSession({ sessionId: 't1' })).resolves.toBe(true);
+
+    expect(calls).toEqual([{ method: 'archiveThread', threadId: 't1' }]);
+    expect(showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  // 预检漏网（探测失败、或刚好在这一刻被别人加载）时，请求被拒仍给同一句说明
+  it('falls_back_to_the_same_explanation_when_the_request_is_rejected', async () => {
+    const { deps, showErrorMessage } = makeSessionActionDeps({
+      lockHeld: false,
+      failWith: new Error('thread t1 already has an active writer'),
+    });
+    const archiveSession = createArchiveSessionCommand(deps);
+
+    await expect(archiveSession({ sessionId: 't1' })).resolves.toBe(false);
+
+    expect(String(showErrorMessage.mock.calls[0]![0])).toContain('无法归档这个会话');
   });
 
   // 反空转护栏：这条文案只能出现在写者锁这一种失败上

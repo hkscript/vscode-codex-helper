@@ -24,6 +24,7 @@ import { createPinStore } from './session/pinStore';
 import { scanHeldRollouts } from './session/processScan';
 import { createRunningTracker, type RunningTracker } from './session/runningTracker';
 import { buildSessionGroups } from './session/sessionStore';
+import { createWriterLockProbe } from './session/writerLock';
 import { createSessionTreeProvider } from './ui/treeProvider';
 
 let appServer: AppServerClient | undefined;
@@ -210,6 +211,18 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const showErrorMessage = (message: string) => vscode.window.showErrorMessage(message);
 
+  /**
+   * 归档/取消归档/删除前的预检：这个会话是不是被 Codex 那侧的 app-server 持有
+   * （那种情况下请求必被写者锁拒掉，见 commands.ts）。用的就是运行状态判定那份 /proc 扫描。
+   */
+  const isLockHeld = createWriterLockProbe({
+    scanHeldRollouts: () =>
+      process.platform === 'linux'
+        ? scanHeldRollouts({ fs: { readdirSync, readlinkSync, readFileSync } })
+        : null,
+    ownPid: () => appServer?.pid(),
+  });
+
   // 会话级动作的唯一 API 入口：重命名 + 归档三件套。
   const threadActions = {
     setThreadName: (threadId: string, name: string) => api().setThreadName(threadId, name),
@@ -226,9 +239,21 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // 归档 / 取消归档 / 删除：三个命令都不弹确认框（用户明确要求），
   // 防误删靠「删除入口只出现在已归档分组」这道流程闸。
-  const archiveSession = createArchiveSessionCommand({ threadApi: threadActions, showErrorMessage });
-  const unarchiveSession = createUnarchiveSessionCommand({ threadApi: threadActions, showErrorMessage });
-  const deleteSession = createDeleteSessionCommand({ threadApi: threadActions, showErrorMessage });
+  const archiveSession = createArchiveSessionCommand({
+    threadApi: threadActions,
+    showErrorMessage,
+    isLockHeld,
+  });
+  const unarchiveSession = createUnarchiveSessionCommand({
+    threadApi: threadActions,
+    showErrorMessage,
+    isLockHeld,
+  });
+  const deleteSession = createDeleteSessionCommand({
+    threadApi: threadActions,
+    showErrorMessage,
+    isLockHeld,
+  });
 
   const newSession = createNewSessionCommand({
     executeCommand: (command: string, ...args: unknown[]) =>

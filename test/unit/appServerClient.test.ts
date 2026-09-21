@@ -25,6 +25,16 @@ async function started(requestTimeoutMs = 100) {
 }
 
 describe('appServerClient', () => {
+  // REQ: 会话归档与删除 / Scenario: 预检要知道「持有者是不是我们自己」
+  it('exposes_the_child_pid_for_ownership_checks', async () => {
+    const { client, child } = await started();
+
+    expect(client.pid()).toBe(child.pid);
+
+    client.dispose();
+    expect(client.pid()).toBeUndefined();
+  });
+
   it('sends_initialize_as_first_message', () => {
     const { fake, client } = setup();
     const ready = client.start();

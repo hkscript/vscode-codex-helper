@@ -48,6 +48,11 @@ export interface AppServerClient {
   dispose(): void;
   /** in-flight requests currently occupying the routing table (diagnostics) */
   pendingCount(): number;
+  /**
+   * 子进程 pid（还没 start 或者进程已退出时是 undefined）。归属探测要用它把「我们自己
+   * 持有的会话」和「Codex 那侧持有的会话」区分开：自己持有的话归档是同进程操作，不会撞锁。
+   */
+  pid(): number | undefined;
 }
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -210,6 +215,9 @@ export function createAppServerClient(options: AppServerClientOptions): AppServe
     },
     pendingCount(): number {
       return pending.size;
+    },
+    pid(): number | undefined {
+      return child?.pid;
     },
   };
 }
