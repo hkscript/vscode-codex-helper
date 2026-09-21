@@ -135,6 +135,20 @@ export interface SessionActionDeps {
   actionLabel: string;
 }
 
+/**
+ * 跨进程写者锁：`thread/archive` / `thread/unarchive` / `thread/delete` 都要求这个会话没有
+ * 被别的 app-server 进程持有。Codex 面板/侧边栏打开过它（哪怕之后关掉了标签），锁仍在
+ * Codex 那个 app-server 进程里；本插件是另一个进程，抢不到、也放不掉：
+ *  - `thread/resume` 想接管 → 同样回 `already has an active writer`；
+ *  - `thread/unsubscribe` 由非持有者发 → 只影响自己的订阅，锁照旧；
+ *  - 关掉标签页也不会释放（持有者是 Codex 的 app-server，不是标签；实测关掉很久仍报错）。
+ * Codex 自己能在面板里归档，是因为它的归档流程是同一个进程里「先 unsubscribe 再 archive」
+ * （bundle: `prepareOwnedThreadForUnarchive`）。字符串匹配与 Codex 自己的判断一致（`p6t`）。
+ */
+export function isActiveWriterError(reason: string): boolean {
+  return /already has an active writer|already has a live local writer/i.test(reason);
+}
+
 export function createSessionActionCommand(
   deps: SessionActionDeps,
 ): (node: { sessionId?: string } | undefined) => Promise<boolean> {
@@ -145,7 +159,15 @@ export function createSessionActionCommand(
       await deps.perform(sessionId);
       return true;
     } catch (error) {
-      deps.showErrorMessage(`${deps.actionLabel}会话失败：${reasonOf(error)}`);
+      const reason = reasonOf(error);
+      if (isActiveWriterError(reason)) {
+        // 如实说明，不给「关标签再试」这类假动作：锁在 Codex 那侧的 app-server 进程里
+        deps.showErrorMessage(
+          `${deps.actionLabel}会话失败：这个会话被 Codex 那侧的 app-server 持有（打开过它，或它正在跑），本插件没法从外面改它。可以改用 Codex 自己的入口，或者 Reload Window 让 Codex 的 app-server 退出之后再试。`,
+        );
+        return false;
+      }
+      deps.showErrorMessage(`${deps.actionLabel}会话失败：${reason}`);
       return false;
     }
   };

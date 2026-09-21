@@ -201,6 +201,37 @@ describe('commands', () => {
     expect(showErrorMessage).not.toHaveBeenCalled();
   });
 
+  // REQ: 会话归档与删除 / Scenario: 写者锁在 Codex 那侧时如实说明，不做假补救
+  it('explains_the_codex_side_writer_lock_instead_of_guessing', async () => {
+    const { deps, calls, showErrorMessage } = makeSessionActionDeps({
+      failWith: new Error('thread t1 already has an active writer'),
+    });
+    const archiveSession = createArchiveSessionCommand(deps);
+
+    await expect(archiveSession({ sessionId: 't1' })).resolves.toBe(false);
+
+    expect(calls).toEqual([]);
+    expect(showErrorMessage).toHaveBeenCalledTimes(1);
+    const message = String(showErrorMessage.mock.calls[0]![0]);
+    // 结论：跨进程拿不到锁，只能换入口或让 Codex 那侧的 app-server 退出
+    expect(message).toContain('被 Codex 那侧的 app-server 持有');
+    expect(message).toContain('Reload Window');
+  });
+
+  // 反空转护栏：这条文案只能出现在写者锁这一种失败上
+  it('keeps_other_failures_verbatim', async () => {
+    const { deps, showErrorMessage } = makeSessionActionDeps({
+      failWith: new Error('thread not found: t1'),
+    });
+    const archiveSession = createArchiveSessionCommand(deps);
+
+    await expect(archiveSession({ sessionId: 't1' })).resolves.toBe(false);
+
+    const message = String(showErrorMessage.mock.calls[0]![0]);
+    expect(message).toContain('thread not found: t1');
+    expect(message).not.toContain('Reload Window');
+  });
+
   // REQ: 会话归档与删除 / Scenario: 归档失败时报错且不改变本地状态
   it('shows_error_when_archive_fails', async () => {
     const { deps, calls, showErrorMessage } = makeSessionActionDeps({

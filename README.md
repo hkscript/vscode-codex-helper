@@ -81,6 +81,7 @@ Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切�
 - 「加载更多」目前只在命令面板里，树底部没有额外的按钮节点。
 - 「已归档」分组只加载一页（`codexHelper.pageSize`，默认 50 条），不参与「加载更多」；归档数量很大时该组显示不全。
 - 删除（`thread/delete`）不可恢复，且不弹确认框：删除入口只出现在「已归档」分组里，要误删得先归档再展开该组。归档可用 `thread/unarchive`（右键「取消归档」，或直接点开该条目）恢复。
+- 归档 / 取消归档 / 删除需要**独占**这个会话：只要 Codex 那侧的 app-server 还持有它（打开过它、或它正在跑），本插件（另一个 app-server 进程）就会拿到 `already has an active writer`。抢不到也放不掉——`thread/resume` 会被同样拒绝，`thread/unsubscribe` 由非持有者发只影响自己的订阅，**关掉标签页也不释放**（持有者是 Codex 的 app-server 进程，不是那个标签，实测关掉很久仍失败）。本插件只如实报错；出路是用 Codex 自己的入口，或者 Reload Window 让 Codex 的 app-server 退出之后再归档。重命名不受影响（`thread/name/set` 不需要独占）。
 - 侧边栏无法知道「某个空白面板正在显示哪个会话」：Codex 的 webview 在面板内新建会话时只做内部路由跳转，不改标签的 resource（上游自己的 chat session provider 也拿不到这个映射）。所以面板里开始的会话在侧边栏表现为「最近」/「历史」里的一行，而不是与那个面板绑定的一行。
 - 打开会话失败时只报错，不会退回「新建空会话」——那样看起来像成功，实际会丢掉用户的对话。
 - 「新建会话」复刻了 Codex 的 new-panel 路由与 `newPanel` query（见「工作原理」）。如果 Codex 升级后改了这条路由、或不再容忍 query，症状是 `+` 开出一个空白/异常页面；此时应改回委派 `chatgpt.newCodexPanel`（代价是只能开一个）。
