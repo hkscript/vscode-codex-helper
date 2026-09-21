@@ -5,6 +5,7 @@
   "version": "0.0.1",
   "publisher": "hkscript",
   "license": "MIT",
+  "icon": "resources/icon.png",
   "engines": {
     "vscode": "^1.96.2"
   },
