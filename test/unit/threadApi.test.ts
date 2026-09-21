@@ -23,6 +23,46 @@ function makeClient() {
 }
 
 describe('threadApi', () => {
+  /** `thread/start` 的响应形状取自上游 schema 的 ThreadStartResponse：结果是 `{thread}`。 */
+  function makeStartClient() {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const client = {
+      request<T>(method: string, params?: unknown): Promise<T> {
+        requests.push({ method, params });
+        return Promise.resolve({ thread: { id: 't-new' } } as T);
+      },
+    };
+    return { client, requests };
+  }
+
+  // REQ: 新建会话 / Scenario: 先建会话再打开它的标签（app-server 层）
+  it('starts_a_thread_with_the_workspace_cwd', async () => {
+    const { client, requests } = makeStartClient();
+    const api = createThreadApi(client);
+
+    await expect(api.startThread({ cwd: '/home/u/proj' })).resolves.toBe('t-new');
+    expect(requests).toEqual([{ method: 'thread/start', params: { cwd: '/home/u/proj' } }]);
+  });
+
+  // REQ: 新建会话 / Scenario: 没有工作区目录时不传 cwd
+  it('omits_cwd_when_there_is_no_workspace_folder', async () => {
+    const { client, requests } = makeStartClient();
+    const api = createThreadApi(client);
+
+    await api.startThread({ cwd: null });
+
+    // 不能传 null：服务端会把 cwd 当过滤/解析输入，而不是「用默认值」
+    expect(requests).toEqual([{ method: 'thread/start', params: {} }]);
+  });
+
+  it('throws_when_thread_start_returns_no_id', async () => {
+    const client = { request: <T,>(_method: string, _params?: unknown): Promise<T> => Promise.resolve({} as T) };
+    const api = createThreadApi(client);
+
+    // 没有 id 就没法开标签：必须在数据层拦住，而不是把 undefined 放进去拼出一个怪 URI
+    await expect(api.startThread()).rejects.toThrow(/thread\/start/);
+  });
+
   it('lists_threads_sorted_by_updated_at_excluding_archived', async () => {
     const { client, requests } = makeClient();
     const api = createThreadApi(client);

@@ -19,6 +19,7 @@ export interface ThreadListQuery {
 }
 
 export interface ThreadApi {
+  startThread(params?: { cwd?: string | null }): Promise<string>;
   listThreads(query?: ThreadListQuery): Promise<ThreadListResponse>;
   listLoadedThreadIds(): Promise<string[]>;
   setThreadName(threadId: string, name: string): Promise<void>;
@@ -37,6 +38,24 @@ export function createThreadApi(
   const pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE;
 
   return {
+    /**
+     * `thread/start`：先把会话建出来，再让开标签这件事按会话 id 走（见 commands.ts
+     * 里「先建会话再打开」的理由）。建出来的会话在首条消息之前是 unmaterialized 状态，
+     * `thread/list` 不会列它，所以不会在侧边栏留下空行。
+     */
+    async startThread(params: { cwd?: string | null } = {}): Promise<string> {
+      const request: Record<string, unknown> = {};
+      // 不传 cwd 时服务端用**它自己进程的 cwd**（扩展宿主的目录），那不是用户的工作区，
+      // 所以有工作区目录时必须显式传入。
+      if (params.cwd) request.cwd = params.cwd;
+      const response = await client.request<{ thread?: { id?: string } }>('thread/start', request);
+      const threadId = response?.thread?.id;
+      if (!threadId) {
+        throw new Error('thread/start returned no thread id');
+      }
+      return threadId;
+    },
+
     async listThreads(query: ThreadListQuery = {}): Promise<ThreadListResponse> {
       const params: Record<string, unknown> = {
         limit: pageSize,

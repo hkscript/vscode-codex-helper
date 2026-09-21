@@ -1,6 +1,4 @@
 import * as vscode from 'vscode';
-import { CODEX_CONVERSATION_VIEW_TYPE, buildNewPanelUri } from './codex/conversationUri';
-import type { UriApi } from './codex/types';
 
 /**
  * Command layer. Everything here is a thin adapter: the interesting logic lives
@@ -69,36 +67,52 @@ export function createRenameSessionCommand(
 }
 
 /**
- * 新建会话：本插件自己打开 Codex 的 new-panel 路由，并在 query 上带一个本次调用
- * 独有的 nonce（design D28/D29）。
+ * 新建会话：**先把会话建出来**（`thread/start`），再按会话 id 打开它的标签。
  *
- * 不能再委派 `chatgpt.newCodexPanel`：它的 resource 是常量
- * `openai-codex://route/extension/panel/new`，而 Codex 注册自定义编辑器时声明
- * `supportsMultipleEditorsPerDocument: false`——同一 resource 的第二次打开只会把
- * 已有的标签移过去，于是连点「+」表现为「没反应」。path 保持逐字不变，webview
- * 的路由才照旧匹配；只让 resource 因 query 而不同。
+ * 为什么不用 Codex 的 new-panel 路由（`/extension/panel/new`，Codex 自己的
+ * `chatgpt.newCodexPanel` 用的也是它）：那条路由开出来的面板，文档 resource 永远停在
+ * `/extension/panel/new`——Codex 的 webview 在面板里新建会话只做**内部路由跳转**，不改
+ * 标签的 resource，上游自己的 `trackTabIfNeeded` / `registerPendingConversation` 也只在
+ * 已知 `conversationId` 时才登记。于是没有任何扩展知道「这个面板在看哪个会话」：侧边栏
+ * 里那条会话没有「已打开」标记，点它只能按会话 id 再开一个标签（用户报告的重复标签），
+ * 而那个面板的标题还停在 Codex 的默认值 `Codex`。
  *
- * 这里也不刷新：`extension.ts` 已订阅 `onDidChangeTabs`，新标签出现会自动刷新树。
+ * 先建会话再打开，标签从出生就带 `openai-codex://route/local/<id>`：侧边栏认得出它、
+ * 点条目即聚焦、标题与列表取的是同一份数据（会话名/预览）。代价是新会话的 cwd 等参数
+ * 由这次 `thread/start` 决定（调用方传当前工作区目录），不再是面板自己那套推断。
+ *
+ * 这里不刷新：`extension.ts` 已订阅 `onDidChangeTabs`，新标签出现会自动刷新树。
  * 失败只报错，绝不静默回退到别的入口。
  */
 export interface NewSessionCommandDeps {
-  executeCommand(command: string, ...args: unknown[]): unknown;
+  /** 建会话，返回 threadId（`thread/start`）。 */
+  startThread(): Promise<string>;
+  /** 打开该会话；失败时由实现方报错（`opener.openSession` 的语义）。 */
+  openConversation(threadId: string): Promise<boolean>;
+  /** 会话建好了却打不开时的清理（`thread/delete`），避免在磁盘上留孤儿。 */
+  discardThread(threadId: string): Promise<void>;
   showErrorMessage(message: string): unknown;
-  uriApi: UriApi;
-  createNonce(): string;
 }
 
 export function createNewSessionCommand(deps: NewSessionCommandDeps): () => Promise<void> {
   return async function newSession(): Promise<void> {
+    let threadId: string;
     try {
-      await deps.executeCommand(
-        'vscode.openWith',
-        buildNewPanelUri(deps.uriApi, deps.createNonce()),
-        CODEX_CONVERSATION_VIEW_TYPE,
-        { preview: false },
-      );
+      threadId = await deps.startThread();
     } catch (error) {
       deps.showErrorMessage(`新建会话失败：${reasonOf(error)}`);
+      return;
+    }
+
+    if (await deps.openConversation(threadId)) return;
+
+    // 打开失败的原因已经由 opener 报过了。刚建出来的空会话不出现在 `thread/list` 里
+    // （首条消息之前是 unmaterialized），留着只会在磁盘上堆孤儿，直接删掉；清理再失败
+    // 也不再报错——用户已经看到了真正的原因。
+    try {
+      await deps.discardThread(threadId);
+    } catch {
+      // 忽略：清理是尽力而为
     }
   };
 }

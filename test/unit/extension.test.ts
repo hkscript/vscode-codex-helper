@@ -104,10 +104,35 @@ function makeTab(conversationId: string) {
   };
 }
 
+/**
+ * 「新建会话」链路的假 app-server：握手照旧，`thread/start` 回一个带 id 的结果（这条
+ * 链路正是拿它的返回值去开标签），其余请求一律成功。顺带记录收到的请求供断言。
+ */
+async function answerNewSession(
+  requests: Array<{ method: string; params?: unknown }>,
+  threadId = 'conv-new',
+): Promise<void> {
+  const child = await appServerChild();
+  for (const line of child.written.splice(0)) {
+    const request = JSON.parse(line) as { id: number; method: string; params?: unknown };
+    requests.push({ method: request.method, params: request.params });
+    if (request.method === 'initialize') {
+      pushMessage(child, { jsonrpc: '2.0', id: request.id, result: { userAgent: 'codex/test' } });
+      continue;
+    }
+    if (request.method === 'thread/start') {
+      pushMessage(child, { jsonrpc: '2.0', id: request.id, result: { thread: { id: threadId } } });
+      continue;
+    }
+    pushMessage(child, { jsonrpc: '2.0', id: request.id, result: {} });
+  }
+}
+
 describe('extension', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     refreshes = 0;
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = undefined;
     // 让 `resolveCodexBinary` 直接返回配置值（否则它会因为「没有装 Codex 扩展」而抛错，
     // 命令根本走不到 app-server 调用）。
     (
@@ -138,6 +163,38 @@ describe('extension', () => {
       'chatgpt.conversationEditor',
       { preview: false },
     );
+  });
+
+  // REQ: 新建会话 / Scenario: 先建会话再按会话 id 打开（接线层）
+  it('new_session_creates_a_thread_then_opens_its_bound_tab', async () => {
+    interceptTreeView();
+    (vscode.workspace as unknown as { workspaceFolders: unknown }).workspaceFolders = [
+      { uri: { fsPath: '/home/u/proj' } },
+    ];
+    activate(makeContext() as never);
+
+    const requests: Array<{ method: string; params?: unknown }> = [];
+    const pending = activatedHandler('codexHelper.newSession')();
+    await flush();
+    await answerNewSession(requests);
+    await flush();
+    await answerNewSession(requests);
+    await pending;
+
+    // 新会话必须落在当前工作区目录里：不传 cwd 时服务端用扩展宿主进程的 cwd
+    expect(requests.find((request) => request.method === 'thread/start')?.params).toEqual({
+      cwd: '/home/u/proj',
+    });
+
+    const openCall = (
+      vscode.commands.executeCommand as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls.find((call) => call[0] === 'vscode.openWith');
+    const uri = openCall?.[1] as { scheme: string; authority: string; path: string; query: string };
+    // 标签必须绑在会话 id 上（而不是 new-panel 路由），侧边栏才能认出「已打开」
+    expect(`${uri.scheme}://${uri.authority}${uri.path}`).toBe('openai-codex://route/local/conv-new');
+    expect(uri.query).toBe('');
+    expect(openCall?.[2]).toBe('chatgpt.conversationEditor');
+    expect(openCall?.[3]).toEqual({ preview: false });
   });
 
   // REQ: 会话归档与删除 / Scenario: 删除只关闭被删会话自己的标签
