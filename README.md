@@ -1,4 +1,4 @@
-# Codex Session Sidebar
+# Codex Helper
 
 在 VS Code 侧边栏里浏览、打开、重命名和置顶 Codex 会话，并一眼看出哪个会话正在运行。
 

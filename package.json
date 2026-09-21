@@ -1,6 +1,6 @@
 {
   "name": "vscode-codex-helper",
-  "displayName": "Codex Session Sidebar",
+  "displayName": "Codex Helper",
   "description": "Browse, open, rename and pin Codex sessions from a sidebar tree view.",
   "version": "0.0.1",
   "publisher": "hkscript",
@@ -128,7 +128,7 @@
       ]
     },
     "configuration": {
-      "title": "Codex Session Sidebar",
+      "title": "Codex Helper",
       "properties": {
         "codexHelper.codexExecutable": {
           "type": "string",
