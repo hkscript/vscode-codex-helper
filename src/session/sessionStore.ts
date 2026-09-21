@@ -73,6 +73,7 @@ export function buildSessionGroups(input: BuildSessionGroupsInput): SessionGroup
       updatedAt: thread?.updatedAt ?? null,
       pinned: pinnedSet.has(id),
       open,
+      running: false,
     };
   }
 

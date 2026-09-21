@@ -37,6 +37,23 @@ export interface Thread {
   cwd: string;
   createdAt: number;
   updatedAt: number;
+  /** Rollout file path. Optional: the file is created lazily on the first turn. */
+  path?: string | null;
+}
+
+export type TurnStatus = 'inProgress' | 'completed' | 'interrupted' | 'failed';
+
+/**
+ * One turn as returned by `thread/turns/list`.
+ *
+ * Cross-process reads encode a turn that is *still running* as
+ * `interrupted` + `completedAt: null` — see design.md D15.
+ */
+export interface Turn {
+  id: string;
+  status: TurnStatus;
+  startedAt?: number | null;
+  completedAt?: number | null;
 }
 
 export interface ThreadListResponse {
@@ -60,6 +77,7 @@ export interface SessionItem {
   updatedAt: number | null;
   pinned: boolean;
   open: boolean;
+  running: boolean;
 }
 
 export type SessionGroupId = 'open' | 'pinned' | 'history';

@@ -90,4 +90,20 @@ describe('treeProvider', () => {
     expect(provider.getTreeItem(groupOf('pinned')).collapsibleState).toBe(TreeItemCollapsibleState.Expanded);
     expect(provider.getTreeItem(groupOf('history')).collapsibleState).toBe(TreeItemCollapsibleState.Collapsed);
   });
+
+  it('same_session_gets_distinct_node_ids_per_group', () => {
+    expect.fail('TODO: implement same_session_gets_distinct_node_ids_per_group');
+  });
+
+  it('running_session_uses_spinner_icon', () => {
+    expect.fail('TODO: implement running_session_uses_spinner_icon');
+  });
+
+  it('pinned_session_description_starts_with_pin_marker', () => {
+    expect.fail('TODO: implement pinned_session_description_starts_with_pin_marker');
+  });
+
+  it('open_and_pinned_item_context_value_is_pinned', () => {
+    expect.fail('TODO: implement open_and_pinned_item_context_value_is_pinned');
+  });
 });

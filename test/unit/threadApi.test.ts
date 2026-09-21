@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createThreadApi } from '../../src/codex/threadApi';
-import { makeThread } from '../helpers/fakes';
+import { makeThread, makeTurn } from '../helpers/fakes';
 
 function makeClient() {
   const requests: Array<{ method: string; params: unknown }> = [];
@@ -73,5 +73,28 @@ describe('threadApi', () => {
     await api.listThreads({ cursor: 'c2' });
 
     expect(requests[0]!.params).toMatchObject({ cursor: 'c2' });
+  });
+
+  it('list_turns_requests_latest_turn_in_descending_order', async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    let turns: unknown[] = [makeTurn({ id: 'turn-2', status: 'interrupted', completedAt: null })];
+    const client = {
+      request<T>(method: string, params?: unknown): Promise<T> {
+        requests.push({ method, params });
+        return Promise.resolve({ data: turns } as T);
+      },
+    };
+    const api = createThreadApi(client);
+
+    const latest = await api.listTurns('t1');
+
+    expect(requests[0]!.method).toBe('thread/turns/list');
+    // sortDirection 必须是 'desc'：服务端拒绝 'descending'（-32600），design §2
+    expect(requests[0]!.params).toEqual({ threadId: 't1', limit: 1, sortDirection: 'desc' });
+    expect(latest?.id).toBe('turn-2');
+
+    // 没有任何回合时返回 undefined，而不是抛错或返回空对象
+    turns = [];
+    expect(await api.listTurns('t1')).toBeUndefined();
   });
 });

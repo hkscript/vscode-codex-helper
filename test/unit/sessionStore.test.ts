@@ -220,4 +220,21 @@ describe('sessionStore', () => {
     expect(allIds(groups).filter((id) => id.startsWith('open-tab:'))).toHaveLength(2);
     expect(ids(groups, 'history')).toEqual(['hist-1']);
   });
+
+  it('pinned_session_stays_in_pinned_group_when_open', () => {
+    expect.fail('TODO: implement pinned_session_stays_in_pinned_group_when_open');
+  });
+
+  it('unpinning_removes_pinned_row_but_keeps_open_row', () => {
+    expect.fail('TODO: implement unpinning_removes_pinned_row_but_keeps_open_row');
+  });
+
+  it('marks_sessions_present_in_running_set', () => {
+    expect.fail('TODO: implement marks_sessions_present_in_running_set');
+  });
+
+  // INV-002: design §6.2 全组合遍历（取代 every_session_appears_in_exactly_one_group）
+  it('group_membership_matrix_holds_for_all_combinations', () => {
+    expect.fail('TODO: implement group_membership_matrix_holds_for_all_combinations');
+  });
 });

@@ -8,7 +8,7 @@
  *     (treeProvider / commands / extension) can still be loaded in node.
  */
 import { vi } from 'vitest';
-import type { MementoLike, OpenTab, Thread, UriApi, UriLike, UriLikeWith } from '../../src/codex/types';
+import type { MementoLike, OpenTab, Thread, Turn, UriApi, UriLike, UriLikeWith } from '../../src/codex/types';
 
 // ── Uri ────────────────────────────────────────────────────────────────────
 
@@ -174,6 +174,15 @@ export function makeThread(partial: Partial<Thread> & { id: string }): Thread {
 
 export function makeOpenTab(id: string | null, tabLabel = 'tab'): OpenTab {
   return { id, tabLabel };
+}
+
+export function makeTurn(partial: Partial<Turn> & { id: string }): Turn {
+  return {
+    status: 'completed',
+    startedAt: 90,
+    completedAt: 100,
+    ...partial,
+  };
 }
 
 // ── `vscode` module stand-in (see vitest.config.ts alias) ─────────────────

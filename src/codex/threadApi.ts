@@ -1,4 +1,4 @@
-import type { ThreadListResponse } from './types';
+import type { ThreadListResponse, Turn } from './types';
 
 /**
  * Typed wrapper over the three app-server thread methods we use.
@@ -20,6 +20,7 @@ export interface ThreadApi {
   listThreads(query?: ThreadListQuery): Promise<ThreadListResponse>;
   listLoadedThreadIds(): Promise<string[]>;
   setThreadName(threadId: string, name: string): Promise<void>;
+  listTurns(threadId: string, limit?: number): Promise<Turn | undefined>;
 }
 
 export const DEFAULT_PAGE_SIZE = 50;
@@ -53,6 +54,17 @@ export function createThreadApi(
 
     async setThreadName(threadId: string, name: string): Promise<void> {
       await client.request('thread/name/set', { threadId, name });
+    },
+
+    // `sortDirection` only accepts 'asc' / 'desc'; 'descending' is rejected
+    // with -32600 (design.md §2).
+    async listTurns(threadId: string, limit = 1): Promise<Turn | undefined> {
+      const response = await client.request<{ data?: Turn[] }>('thread/turns/list', {
+        threadId,
+        limit,
+        sortDirection: 'desc',
+      });
+      return response?.data?.[0];
     },
   };
 }
