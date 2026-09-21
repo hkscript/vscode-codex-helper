@@ -108,6 +108,18 @@
 - 确定性：[Verified]（`SessionItem.cwd` 已存在于 `src/codex/types.ts:76`，由 `src/session/sessionStore.ts:76` 填充，无需改类型或 API）
 - [x] 条目描述由首条消息改为会话目录
 
+### Task 9（2026-09-21 amend）: 回合查询抛错的隔离（补 T-008 的抛错路径）
+- 目标：用一条真会 reject 的 `listTurns` 钉住 `recompute` 的 try/catch（D24）——单个会话的回合查询抛错不得让整轮重算失效，也不得带走其他会话的运行标识
+- Test cases: T-032
+- Files: `src/session/runningTracker.ts`, `test/unit/runningTracker.test.ts`, `openspec/changes/add-session-running-and-pin-indicators/test-plan.md`, `openspec/changes/add-session-running-and-pin-indicators/plan-ready.md`
+- 改动文件：`src/session/runningTracker.ts` [Verified]（`:131-136` 的 try/catch）、`test/unit/runningTracker.test.ts` [Verified]
+- 覆盖场景：T-032（补完 scenario「单个会话的回合查询失败不影响其他会话」的抛错路径）
+- 测试先行：先写 `test/unit/runningTracker.test.ts::throwing_turn_query_does_not_clear_other_sessions`——复用该文件既有的 `harness()`，`turns` 对 `t1` 抛错、对 `t2` 返回运行中回合，断言 `t2` 仍在运行集合且 `t1` 不在
+- 验证方式：`npx vitest run test/unit/runningTracker.test.ts` 先红后绿；随后 `pnpm test` 全量绿、`pnpm typecheck` 通过
+- RED 凭据来源：`[Verified]` 实现先于测试存在，红用**变异校验**取得（临时移除 `:131-136` 的 try/catch 见到红，再加回作为 Step 3 的最小实现）
+- 确定性：[Verified]（try/catch 位于 `src/session/runningTracker.ts:131-136`；实测移除后 74 个既有测试仍全绿，证明该保护此前零覆盖）
+- [x] 回合查询抛错的隔离（补 T-008 的抛错路径）
+
 ## 依赖顺序
 
 ```
@@ -120,6 +132,8 @@ Task 4（分组，用到 SessionItem.running）
 Task 3 + Task 2 ─► Task 6（追踪器）─► Task 7（接线）
 
 Task 5（条目呈现）─► Task 8（描述改为目录，amend 追加）
+
+Task 6（追踪器）─► Task 9（抛错隔离，amend 追加；只补测试 + 复用既有 try/catch）
 ```
 
 ## Amendments
@@ -129,6 +143,12 @@ Task 5（条目呈现）─► Task 8（描述改为目录，amend 追加）
 - 新增 Task 8；Task 1–7 已完成，checkbox 保持 `[x]`
 - Task 5 的产出被 Task 8 部分改写（只改 `description` 的内容，节点 id / 图标 / contextValue 不动），其 T-025 / T-026 / T-028 三条测试不受影响
 - 详细影响分析见 `test-plan.md` 的 `## Amendments`
+
+### 2026-09-21 — 补 T-008 缺失的「抛错」路径
+
+- 新增 Task 9；Task 1–8 已完成，checkbox 保持 `[x]`
+- 不新增/修改 scenario，不新增生产代码路径：Task 9 的 Step 3「最小实现」就是把 `src/session/runningTracker.ts:131-136` 既有的 try/catch 加回，净改动为 0
+- T-008 保留原样，见 `test-plan.md` 的 `## Amendments`
 
 ## 人工验收（非自动化，build 完成后在真实窗口确认）
 

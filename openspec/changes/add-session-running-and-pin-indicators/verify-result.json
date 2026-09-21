@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "change": "add-session-running-and-pin-indicators",
+  "head": "e19efbb88acbedf967e8b3452a8563ca41604a3f",
+  "fingerprint": "sha256:3fa18ad6f9839bc23aff57300fadda1e59468ea22aa2f71ef17b24af5530adae",
+  "testRuns": [
+    {
+      "name": "full-suite",
+      "exitCode": 0
+    }
+  ],
+  "scenarioCoverage": {
+    "mapped": 41,
+    "total": 41
+  },
+  "designConsistency": {
+    "pass": true,
+    "blockers": []
+  },
+  "userConfirmation": {
+    "received": true
+  }
+}

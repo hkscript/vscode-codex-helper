@@ -41,6 +41,7 @@ T-028: `test/unit/treeProvider.test.ts::open_and_pinned_item_context_value_is_pi
 T-029: `test/unit/runningTracker.test.ts::stale_recompute_results_are_discarded` 🔴 RED ✅ PASS
 T-030: `test/unit/treeProvider.test.ts::description_shows_cwd_basename` 🔴 RED ✅ PASS
 T-031: `test/unit/treeProvider.test.ts::session_without_cwd_has_empty_description` 🔴 RED ✅ PASS
+T-032: `test/unit/runningTracker.test.ts::throwing_turn_query_does_not_clear_other_sessions` 🔴 RED ✅ PASS
 INV-001: `test/unit/runningState.test.ts::running_iff_no_terminal_record_and_owner_alive` covers T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010 🔴 RED ✅ PASS
 INV-002: `test/unit/sessionStore.test.ts::group_membership_matrix_holds_for_all_combinations` covers T-022, T-023 🔴 RED ✅ PASS
 INV-003: `test/unit/treeProvider.test.ts::description_matrix_holds_for_all_cwd_and_pinned_combinations` covers T-027, T-030, T-031 🔴 RED ✅ PASS
@@ -104,7 +105,7 @@ INV-003: `test/unit/treeProvider.test.ts::description_matrix_holds_for_all_cwd_a
 ## 统计
 
 - 本变更 scenario 总数：41（新增/变更 31，行为不变沿用既有覆盖 10）
-- 新增测试用例：31 个 T + 3 个 INV
+- 新增测试用例：31 个 T + 3 个 INV（另加 2026-09-21 amend 的 T-032，见 `## Amendments`）
 - 涉及测试文件：6（新增 3：`runningState` / `processScan` / `runningTracker`；改动 3：`threadApi` / `sessionStore` / `treeProvider`）
 
 ## Amendments
@@ -125,3 +126,26 @@ INV-003: `test/unit/treeProvider.test.ts::description_matrix_holds_for_all_cwd_a
 小结：31 条已有用例中 1 条需修改、0 条废弃，新增 3 条（2 个 T + 1 个 INV）。
 
 **为什么要加 INV-003 而不是只加两条 T**：`description` 的组装是 (cwd 形态 × pinned) 的二维组合，而 `` `📌 ${base ?? ''}` `` 在 base 为空时留下的尾随空格**在终端和 UI 里都看不见**。`startsWith('📌')` 这类断言对它完全免疫——它永远为真。只有逐格比对完整字符串才能钉住，所以矩阵里 8 格全部用完整相等断言。
+
+### 2026-09-21 — 补 T-008 缺失的「抛错」路径
+
+**触发**：verify 闸门 4「断言有没有失败能力」的核对。
+
+**问题**：scenario「单个会话的回合查询失败不影响其他会话」（`specs/codex-session-sidebar/spec.md`）的 GIVEN 写的是「`t1` 的回合查询**抛出错误**」，THEN 含「计算过程**不向上抛错**」。而 T-008 映射的用例 `runningState.test.ts::turn_query_failure_isolates_to_that_session` 把「查询失败」建模为 turns map 里**缺少 `t1` 这个键**——它钉的是 `computeRunningIds`（纯函数，只收一个 Map，永远看不到异常）的数据缺失分支。真正处理 reject 的 `src/session/runningTracker.ts:131-136` 的 try/catch（D24）无任何测试覆盖。
+
+**变异校验（实测，非推断）**：把 `:131-136` 的 try/catch 整块移除后跑全量——**74 个既有测试全绿**。即这层保护此前删掉没有任何测试会响；再补一条真会 reject 的 `listTurns` 的用例，在移除 try/catch 的版本上红（错误从 `recompute` 逃逸：`schedule()` 用 `void recompute()` 丢弃 promise，异常变成 unhandled rejection，其他会话的运行标识也不更新），还原后转绿。
+
+影响分析（改文档前完成）：
+
+| 编号 | 所属 Requirement | 影响 | 说明 |
+|------|-----------------|------|------|
+| T-008 | 会话运行状态识别 | 无影响 | 断言仍成立且仍有价值（数据缺失 ⇒ 非运行且隔离），保留原样 |
+| T-016 / T-017 / T-018 / T-019 / T-020 / T-021 / T-029 | 运行状态自动刷新 | 无影响 | 均不构造 reject 的 `listTurns`（harness 默认 `async () => runningTurn()`，传 spy 的用例也都 resolve） |
+| T-001~T-007、T-009~T-015、T-022~T-028、T-030、T-031、INV-001~INV-003 | 其余全部 | 无影响 | 不经手 `runningTracker.recompute` 的查询边界 |
+| T-032 | 会话运行状态识别 | ➕ 新增 | 用真会 reject 的 `listTurns` 钉住 try/catch：抛错会话判非运行、其他会话照常运行、不向上抛错 |
+
+小结：32 条已有用例中 0 条需修改、0 条废弃，新增 1 条。scenario 总数不变（41）——本次不新增 scenario，只补完既有 scenario 的另一半覆盖。
+
+**为什么不重写 T-008**：它的断言（缺数据的会话不进入运行集合、同时不影响其他会话）是独立的真实约束，且有失败能力；抛错隔离是同一 scenario 的另一条边界。两者都留，scenario 的两条路径才都有钉子。
+
+**RED 凭据的获取方式**：实现（try/catch）先于测试存在，故 T-032 的红按 archive lessons 的**变异校验**方式取得——临时移除该保护看到红，再把它作为 Step 3 的最小实现加回。

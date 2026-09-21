@@ -241,4 +241,28 @@ describe('runningTracker', () => {
 
     tracker.dispose();
   });
+
+  it('throwing_turn_query_does_not_clear_other_sessions', async () => {
+    // D24 的另一半：查询「抛错」（而不只是返回空）也不能带走别的会话。
+    // schedule() 用 `void recompute()` 丢弃 promise，异常会变成 unhandled rejection，
+    // 整轮重算静默失效——所以这条边界必须由测试钉住，而不是靠 catch 写得对。
+    const { tracker, notifications } = harness({
+      held: () => new Map([['t1', 4242], ['t2', 4243]]),
+      turns: async (threadId) => {
+        if (threadId === 't1') throw new Error('thread/turns/list failed');
+        return runningTurn();
+      },
+    });
+
+    tracker.update([thread('t1'), thread('t2')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+    // t1 查询失败 ⇒ 判非运行；t2 照常运行；回调仍按运行集合发出
+    expect(tracker.snapshot().has('t1')).toBe(false);
+    expect(tracker.snapshot().has('t2')).toBe(true);
+    expect(notifications).toHaveLength(1);
+    expect([...notifications[0]!]).toEqual(['t2']);
+
+    tracker.dispose();
+  });
 });

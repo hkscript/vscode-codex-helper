@@ -108,3 +108,16 @@
 2. 已命名的会话在树上不再能看到首条消息。判断依据是「既然起了名字，名字就是这个会话的身份」。
 
 **顺带修复**：`specs/codex-session-sidebar/spec.md` 中 `## REMOVED Requirements` 的 `**Migration**` 字段在 spec 阶段被写坏——其文本尾部（以 `` ## ADDED Requirements` `` 开头的一行）被落在了文件第 161 行，夹在 ADDED 段中间伪装成一个二级标题，而文件末尾的 `**Migration**:` 只剩一个未闭合的反引号。`openspec validate --strict` 对此不报错。本次 amend 将该行归位。
+
+### 2026-09-21 — 补 T-008 缺失的「抛错」路径
+
+**原因**：verify 闸门 4 核对「断言有没有失败能力」时发现，scenario「单个会话的回合查询失败不影响其他会话」的 GIVEN 写的是回合查询**抛出错误**，而唯一映射到它的测试把失败建模为「turns map 里缺键」——钉的是纯函数的数据缺失分支，真正处理 reject 的 `src/session/runningTracker.ts:131-136` 的 try/catch 没有任何测试覆盖。变异校验：移除该 try/catch 后 74 个既有测试全绿。
+
+**摘要**：
+
+- 新增一条测试用例（`T-032`）：用真会 reject 的 `listTurns` 钉住抛错隔离——抛错会话判非运行、其他会话照常运行、异常不向上逃逸。
+- **不改需求**：requirement 与 scenario 原文已经正确写明了这条约束，缺的是测试而不是规格。因此本次 amend 不修改 `specs/**`，也不新增 scenario，scenario 总数仍为 41。
+- **不改设计**：不新增生产代码路径——`src/session/runningTracker.ts:131-136` 的 try/catch 早已实现且行为正确，Task 9 的「最小实现」就是把它加回，净改动为 0。`design.md` 的「现状与影响面」与 `## 改动文件` 无需同步。
+- T-008 保留原样：它钉的「数据缺失时隔离」是同一 scenario 的另一条真实边界，仍有失败能力。
+
+**已知取舍**：`schedule()` 用 `void recompute()` 丢弃 promise，所以 try/catch 一旦缺失，失败形态是 unhandled rejection（整轮重算静默失效）而不是显式报错。本次只补测试钉住现状，不改这个调度结构——改它属于另一个变更（例如给 `recompute` 加显式的错误上报）。

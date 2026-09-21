@@ -2010,3 +2010,103 @@ git commit -m "feat(ui): show the session directory instead of its first message
 
 4. 侧边栏条目右侧显示的是会话所在目录的末级目录名；置顶的条目为 `📌 <目录名>`。
 5. 打开一个服务端列表里没有的会话（新建标签）→ 该行右侧为空；把它置顶 → 右侧恰为 `📌`。
+
+## Amendment 2026-09-21（第二次）: 补 T-008 缺失的「抛错」路径
+
+Task 1–8 已完成并 commit。以下为 amend 追加的 Task 9。规格依据：spec.md 的 `Scenario: 单个会话的回合查询失败不影响其他会话`（其 GIVEN 写的是「查询**抛出错误**」、THEN 含「计算过程**不向上抛错**」）；触发自 verify 闸门 4。
+
+### Task 9: 回合查询抛错的隔离
+
+**Files:**
+- Modify: `src/session/runningTracker.ts`（`recompute` 内 `:131-136` 的 try/catch——本 task 的净改动为 0，见 Step 2/3）
+- Test: `test/unit/runningTracker.test.ts`（新增 T-032）
+
+**Interfaces:**
+- Consumes: 该文件既有的 `harness({ held, turns, ... })`（`turns?: (threadId: string) => Promise<Turn | undefined>`）、`thread(id)`、`runningTurn()`、`DEBOUNCE`
+- Produces: 无新增导出
+
+**约定：** 该用例必须让 `listTurns` **真的 reject**（不是返回 `undefined`、也不是让 turns map 缺键——那两条是 T-008 与 T-006 的地盘），否则它测不到 `recompute` 的 catch 分支。
+
+- [ ] **Step 1: 写 T-032**
+
+在 `test/unit/runningTracker.test.ts` 的 `describe` 内追加：
+
+```ts
+  it('throwing_turn_query_does_not_clear_other_sessions', async () => {
+    // D24 的另一半：查询「抛错」（而不只是返回空）也不能带走别的会话。
+    // schedule() 用 `void recompute()` 丢弃 promise，异常会变成 unhandled rejection，
+    // 整轮重算静默失效——所以这条边界必须由测试钉住，而不是靠 catch 写得对。
+    const { tracker, notifications } = harness({
+      held: () => new Map([['t1', 4242], ['t2', 4243]]),
+      turns: async (threadId) => {
+        if (threadId === 't1') throw new Error('thread/turns/list failed');
+        return runningTurn();
+      },
+    });
+
+    tracker.update([thread('t1'), thread('t2')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+    // t1 查询失败 ⇒ 判非运行；t2 照常运行；回调仍按运行集合发出
+    expect(tracker.snapshot().has('t1')).toBe(false);
+    expect(tracker.snapshot().has('t2')).toBe(true);
+    expect(notifications).toHaveLength(1);
+    expect([...notifications[0]!]).toEqual(['t2']);
+
+    tracker.dispose();
+  });
+```
+
+- [ ] **Step 2: 见到它红（变异校验）**
+
+实现（try/catch）先于测试存在，所以这里没有「先写实现」的空间：红必须靠**临时移除该保护**取得。把 `src/session/runningTracker.ts:130-137` 改为：
+
+```ts
+    await mapWithLimit(candidates, MAX_CONCURRENT_QUERIES, async (thread) => {
+      turns.set(thread.id, await deps.listTurns(thread.id));
+    });
+```
+
+跑：
+
+```bash
+npx vitest run test/unit/runningTracker.test.ts
+```
+
+必须看到 `throwing_turn_query_does_not_clear_other_sessions` 失败，且失败原因指向「异常从 `recompute` 逃逸 / `t2` 未被标为运行中」，而不是 fixture 没建好。确认后在该行行尾追加 ` 🔴 RED`。
+
+**同时记录既有套件的盲区证据**：移除后跑 `pnpm test` 仍是 74 全绿——这正说明该保护此前零覆盖，是本次 amend 的全部理由。
+
+- [ ] **Step 3: 最小实现——把 try/catch 加回**
+
+```ts
+    await mapWithLimit(candidates, MAX_CONCURRENT_QUERIES, async (thread) => {
+      try {
+        turns.set(thread.id, await deps.listTurns(thread.id));
+      } catch {
+        // D24: one failed query means "not running", not a broken tree.
+        turns.set(thread.id, undefined);
+      }
+    });
+```
+
+净改动为 0：这与 Step 2 之前的工作树逐字一致（用 `git diff src/session/runningTracker.ts` 确认无差异）。
+
+- [ ] **Step 4: 全绿**
+
+```bash
+npx vitest run test/unit/runningTracker.test.ts   # 该文件转绿
+pnpm test                                          # 75 个测试全量绿
+pnpm typecheck
+```
+
+- [ ] **Step 5: 收尾写入**
+
+`test-plan.md` 的 T-032 行尾追加 ` ✅ PASS`（保持 `🔴 RED` 在前）；`plan-ready.md` 的 Task 9 checkbox 改 `[x]`。
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/session/runningTracker.ts test/unit/runningTracker.test.ts openspec/changes/add-session-running-and-pin-indicators/ docs/superpowers/plans/
+git commit -m "test(session): pin the turn-query failure isolation in runningTracker"
+```
