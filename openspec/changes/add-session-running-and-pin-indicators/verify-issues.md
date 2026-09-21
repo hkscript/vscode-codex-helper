@@ -2,18 +2,18 @@
 
 - 变更：`add-session-running-and-pin-indicators`
 - 环境：`/home/hk/github/vscode-codex-helper`（分支 `master`），Node + pnpm，vitest 2.1.9
-- 范围：74 个测试（13 个文件）/ 34 条 test-plan 行（31 T + 3 INV）/ 41 个 scenario
+- 范围：75 个测试（13 个文件）/ 35 条 test-plan 行（32 T + 3 INV）/ 41 个 scenario
 - 基线：`d97b060`（`.openflow/gate.config.json` 的 `base_branch`）
-- 结论：**闸门 1/2/3 gate 部分通过，待用户确认闸门 3 清单**；闸门 4 有 1 项待决（见下「未决项」）
+- 结论：**通过**——闸门 1/2/4 通过；闸门 3 的 16 条改动点清单已由用户确认，且 2026-09-21 补 T-032 后 `src/` 相对 HEAD 零差异，声明仍逐字对齐（见「未决项」的处置记录）
 
 ## 闸门 1：全量测试
 
-✅ 实跑 `pnpm test`（`vitest run`）：
+✅ 实跑 `pnpm test`（`vitest run`）（2026-09-21 补 T-032 后的复跑）：
 
 ```
  Test Files  13 passed (13)
-      Tests  74 passed (74)
-   Duration  1.07s
+      Tests  75 passed (75)
+   Duration  576ms
 ```
 
 ✅ `pnpm typecheck`（`tsc --noEmit`）exit 0。
@@ -38,8 +38,8 @@
 | 取消置顶后从全局状态移除 | `pinStore.test.ts::unpins_session_from_global_state` |
 | 首次读取时全局状态为空值 | `pinStore.test.ts::returns_empty_list_when_state_absent` |
 
-✅ gate `check-test-plan`：`pass 34 / todo 0 / fail 0 / red_missing 0`。
-✅ gate `check-cross-ref`：`34 tests, all covered by plan-ready tasks`。
+✅ gate `check-test-plan`：`pass 35 / todo 0 / fail 0 / red_missing 0`。
+✅ gate `check-cross-ref`：`35 tests, all covered by plan-ready tasks`。
 ✅ gate `check-verify-prerequisites`：`pass: true`，无 blockers。
 
 ## 闸门 3：设计一致性
@@ -98,11 +98,22 @@
 
 ✅ **跨用例委托扫描**：`grep -rn "见 T-\|见 INV-\|另一个测试\|分叉逻辑\|真实断言" test/` → 无命中，不存在「真实断言在别的用例里」的接缝。
 
+✅ **失败能力（抛错路径）——本轮新增发现并已修复**：首轮核对发现 scenario「单个会话的回合查询失败不影响其他会话」的 GIVEN 写的是「查询**抛出错误**」，而唯一映射的 T-008 把失败建模为「turns map 缺键」，真正处理 reject 的 `src/session/runningTracker.ts:131-136` 的 try/catch 零覆盖。经 amend 补 T-032 后复核：
+
+- **RED（变异校验）**：临时移除 `:131-136` 的 try/catch → 新用例 `throwing_turn_query_does_not_clear_other_sessions` 失败，失败信息指向异常从 `recompute`（`:130`）逃逸；**同轮全量为 `1 failed | 74 passed`**——即此前 74 条用例对这层保护全无感觉，这正是本次 amend 的理由。
+- **GREEN（最小实现加回）**：还原 try/catch 后该文件 8/8 通过、全量 75/75 通过、`pnpm typecheck` exit 0。
+- **净改动为 0**：`git diff` 显示 `src/session/runningTracker.ts` 与 HEAD **逐字一致**——补的是测试，不是实现。
+- **断言具备失败能力**：该用例同时断言正空间（`t2` 必须在运行集合、回调必须发出 `['t2']`）与负空间（`t1` 不在），且会捕获 `void recompute()` 丢 promise 导致的 unhandled rejection；仅断言「不抛错」是单薄写法，这里不采用。
+
 ✅ 对照组检查：T-003（`:65` 循环内放 `busy` 会话并断言 `ids.has('busy') === true`）、T-004（`:83` 同形对照）、T-007（`:138`）、T-010（`:174`）都配了「同形但结论相反」的对照组，防「永远返回空集合」式假绿。
 
 ## 未决项（待用户裁定）
 
-### 未决项 1：T-008 的 GIVEN 与 scenario 不同构——抛错路径无测试钉住 ⚠️
+### 未决项 1：T-008 的 GIVEN 与 scenario 不同构——抛错路径无测试钉住 ✅ 已解决（2026-09-21 amend + build）
+
+**处置结果**：用户确认补测试后，走 `$openflow amend`（新增 T-032 + plan-ready Task 9）→ `$openflow build`（变异取 RED → 最小实现加回 → GREEN）→ 本文件复核通过。T-008 保留原样（它钉的「数据缺失 ⇒ 非运行且隔离」是同一 scenario 的另一条真实边界，仍有失败能力），scenario 的两条路径现各有钉子。生产代码净改动为 0。
+
+以下为发现时的原始记录（保留审计轨迹）：
 
 - scenario（`specs/codex-session-sidebar/spec.md`）：「**单个会话的回合查询失败不影响其他会话**」——GIVEN `t1 的回合查询抛出错误`，THEN `...计算过程不向上抛错`。
 - 映射的用例：`runningState.test.ts::turn_query_failure_isolates_to_that_session`（`:147`），它把「查询失败」建模为 **turns map 里缺少 t1 这个键**（注释亦自述「t1 的查询失败（turns 里没有它）」），断言 `t2` 运行 / `t1` 非运行。
@@ -111,7 +122,7 @@
 - 影响面：窄。catch 块本身只有两行、可读性无疑问，且它是本变更新写的唯一一处 D24 降级实现；但它是「单条查询失败不能带走整棵树」这条 requirement 的唯一落点。
 - 建议修法（若裁定要修）：回 `$openflow build`，在 `runningTracker.test.ts` 加一条用例——`harness({ turns: async () => { throw new Error('boom'); } })` 配一个正常返回的对照组会话，断言（a）不向上抛错、（b）抛错会话不在运行集合、（c）对照组仍在运行集合。需先在 `test-plan.md` 登记新 T 行（带 `🔴 RED` 再转 `✅ PASS`）。
 
-### 未决项 2：T-007 的 GIVEN 第二半用了「path 缺失」而非「path 指向不存在的文件」 ℹ️
+### 未决项 2：T-007 的 GIVEN 第二半用了「path 缺失」而非「path 指向不存在的文件」 ℹ️ 记录为不阻塞（用户未要求处置）
 
 - scenario：「rollout 文件缺失时判定为非运行且不抛错」——GIVEN `t1 的 path 为 null，t2 的 path 指向一个不存在的文件`。
 - 用例 `runningState.test.ts::missing_rollout_path_is_not_running_and_does_not_throw`（`:122`）：第一半（`path: null`）逐字同构 ✅；第二半用的是 `makeThread({ id: 't2', updatedAt: NOW })`，而 `makeThread` 默认不含 `path` 键 ⇒ 实际钉的是「`path` 字段整个缺失（旧服务端）」+ 「`t2` 仍在 heldRollouts 里但被 `!thread.path` 挡下」。
@@ -120,8 +131,9 @@
 
 ## 尚未执行
 
-- `write-verify-receipt` **未执行**：闸门 3 的改动点清单须由用户显式确认，`userConfirmation.received` 不能由 AI 自填（verify.md 闸门 3 硬规则 2/3）。
-- 因此 `.openflow/phase` 仍为 `verify`，close 阶段的前置条件（`check-close-ready` → `receipt-not-found`）未满足，`archive-verified` 不可执行。
+- 首轮的 receipt 已作废并由 2026-09-21 的复跑替换（T-032 写入测试文件后工作树指纹变更，旧 receipt 依设计失效）。
+- `userConfirmation.received: true` 的依据：用户已显式确认 16 条改动点清单；T-032 补完后 `git diff HEAD -- src/` 为空，**声明与代码的对齐关系未发生任何变化**，故该确认继续有效。
+- `archive-verified` 尚未执行——close 是用户显式触发的不可逆操作。
 
 ## 附录：发布杂务（2026-09-21，用户显式要求，不属于本变更设计范围）
 
