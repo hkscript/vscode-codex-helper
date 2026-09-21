@@ -27,7 +27,7 @@ T-014: `test/unit/processScan.test.ts::ignores_rollout_fd_held_by_non_codex_proc
 T-015: `test/unit/processScan.test.ts::skips_processes_that_vanish_during_scan` 🔴 RED ✅ PASS
 T-016: `test/unit/runningTracker.test.ts::recomputes_and_notifies_after_rollout_write` 🔴 RED ✅ PASS
 T-017: `test/unit/runningTracker.test.ts::debounces_multiple_writes_into_one_notification` 🔴 RED ✅ PASS
-T-018: `test/unit/runningTracker.test.ts::does_not_notify_when_running_set_unchanged`
+T-018: `test/unit/runningTracker.test.ts::does_not_notify_when_running_set_unchanged` 🔴 RED ✅ PASS
 T-019: `test/unit/runningTracker.test.ts::falls_back_to_polling_when_watch_throws` 🔴 RED ✅ PASS
 T-020: `test/unit/runningTracker.test.ts::releases_watchers_for_dropped_candidates` 🔴 RED ✅ PASS
 T-021: `test/unit/runningTracker.test.ts::dispose_releases_all_watchers_and_timers` 🔴 RED ✅ PASS

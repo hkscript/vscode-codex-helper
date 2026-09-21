@@ -149,6 +149,21 @@
           "type": "number",
           "default": 0,
           "description": "自动刷新间隔（秒）。0 表示关闭。"
+        },
+        "codexHelper.showRunningIndicator": {
+          "type": "boolean",
+          "default": true,
+          "description": "在正在执行回合的会话上显示运行图标。"
+        },
+        "codexHelper.runningStaleSeconds": {
+          "type": "number",
+          "default": 300,
+          "description": "运行状态的过期阈值（秒）。仅用于无法探测进程归属的平台（macOS / Windows）：超过该时长没有写入的会话不再显示为运行中。Linux 上由进程归属判定，不使用该阈值。"
+        },
+        "codexHelper.runningPollSeconds": {
+          "type": "number",
+          "default": 5,
+          "description": "文件监听不可用时的兜底轮询间隔（秒）。0 表示关闭兜底轮询。"
         }
       }
     }

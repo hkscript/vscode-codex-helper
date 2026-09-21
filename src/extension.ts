@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { readFileSync, readdirSync, readlinkSync, watch } from 'node:fs';
 import * as vscode from 'vscode';
 import { createAppServerClient, type AppServerClient } from './codex/appServerClient';
 import { resolveCodexBinary } from './codex/binary';
@@ -8,11 +9,14 @@ import { createNewSessionCommand, createRenameSessionCommand, registerCommands }
 import { createSessionOpener } from './session/opener';
 import { scanCodexTabs } from './session/openTabs';
 import { createPinStore } from './session/pinStore';
+import { scanHeldRollouts } from './session/processScan';
+import { createRunningTracker, type RunningTracker } from './session/runningTracker';
 import { buildSessionGroups } from './session/sessionStore';
 import { createSessionTreeProvider } from './ui/treeProvider';
 
 let appServer: AppServerClient | undefined;
 let autoRefresh: ReturnType<typeof setInterval> | undefined;
+let runningTracker: RunningTracker | undefined;
 
 /** Menu contributions hand us the tree node; `TreeItem.command` hands us a payload. Accept both. */
 function sessionIdOf(node: unknown): string | undefined {
@@ -77,6 +81,8 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   }
 
+  let tracker: RunningTracker | undefined;
+
   async function load(): Promise<SessionGroup[]> {
     const page = await api().listThreads({
       searchTerm: filter,
@@ -85,15 +91,38 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     threads = page.data;
     cursor = page.nextCursor;
+    // 喂最新的线程列表。tracker 只在运行集合真的变化时才回调（D23），
+    // 所以这条 refresh → load → update → refresh 的回环一轮就收敛。
+    tracker?.update(threads);
     return buildSessionGroups({
       threads,
       openTabs: openTabs(),
       pinnedIds: pinStore.list(),
+      runningIds: tracker?.snapshot() ?? null,
       filter,
     });
   }
 
   const provider = createSessionTreeProvider({ load });
+
+  if (configuration().get<boolean>('showRunningIndicator') ?? true) {
+    tracker = createRunningTracker({
+      // 归属探测只在 Linux 可用；其他平台返回 null 走时间阈值降级（D16）。
+      scanHeldRollouts: () =>
+        process.platform === 'linux'
+          ? scanHeldRollouts({ fs: { readdirSync, readlinkSync, readFileSync } })
+          : null,
+      listTurns: (threadId: string) => api().listTurns(threadId),
+      watch: (path: string, onChange: () => void) => {
+        const watcher = watch(path, onChange);
+        return { close: () => watcher.close() };
+      },
+      onChange: () => provider.refresh(),
+      pollSeconds: configuration().get<number>('runningPollSeconds') ?? 5,
+      staleSeconds: configuration().get<number>('runningStaleSeconds') ?? 300,
+    });
+    runningTracker = tracker;
+  }
   const view = vscode.window.createTreeView('codexHelper.sessions', {
     treeDataProvider: provider as unknown as vscode.TreeDataProvider<unknown>,
   });
@@ -180,6 +209,9 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {
   if (autoRefresh) clearInterval(autoRefresh);
   autoRefresh = undefined;
+  // inotify 句柄与轮询定时器不回收会比扩展活得更久。
+  runningTracker?.dispose();
+  runningTracker = undefined;
   appServer?.dispose();
   appServer = undefined;
 }

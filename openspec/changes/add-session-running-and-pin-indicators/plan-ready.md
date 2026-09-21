@@ -92,7 +92,7 @@
 - 测试先行：先写 `test/unit/runningTracker.test.ts::does_not_notify_when_running_set_unchanged`——这是 `refresh → load → update → refresh` 自激的唯一防线
 - 验证方式：`pnpm test` 全量绿；`pnpm typecheck` 通过；`pnpm build` 成功。新增配置项：`codexHelper.showRunningIndicator`（boolean，默认 `true`）、`codexHelper.runningStaleSeconds`（number，默认 `300`，仅用于无法探测进程归属的平台）、`codexHelper.runningPollSeconds`（number，默认 `5`，`0` 表示关闭兜底轮询）
 - 确定性：[Verified]（`extension.ts:80-94` 的 `load`、`:120-171` 的 subscriptions、`:180-185` 的 `deactivate`、`package.json:130-152` 的 configuration 均已确认）
-- [ ] 接线、自激防护与配置项
+- [x] 接线、自激防护与配置项
 
 ## 依赖顺序
 

@@ -122,8 +122,25 @@ describe('runningTracker', () => {
     tracker.dispose();
   });
 
-  it('does_not_notify_when_running_set_unchanged', () => {
-    expect.fail('TODO: implement does_not_notify_when_running_set_unchanged');
+  it('does_not_notify_when_running_set_unchanged', async () => {
+    const { tracker, notifications } = harness({});
+
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(notifications).toHaveLength(1);
+    expect([...notifications[0]!]).toEqual(['t1']);
+
+    // 模拟 refresh → load → update 的回环：状态没变就不能再回调，
+    // 否则 onChange → refresh → load → update 会无限自激（D23）
+    for (let round = 0; round < 5; round += 1) {
+      tracker.update([thread('t1')]);
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    }
+
+    expect(notifications).toHaveLength(1);
+    expect(tracker.snapshot().has('t1')).toBe(true);
+
+    tracker.dispose();
   });
 
   it('falls_back_to_polling_when_watch_throws', async () => {
