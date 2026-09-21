@@ -45,6 +45,50 @@ describe('threadApi', () => {
     expect((requests[1]!.params as { limit: number }).limit).toBe(5);
   });
 
+  // REQ: 会话归档与删除 / Scenario: 删除已归档会话不弹确认直接执行（app-server 层）
+  it('sends_thread_delete_with_thread_id', async () => {
+    const { client, requests } = makeClient();
+    const api = createThreadApi(client);
+
+    await api.deleteThread('t1');
+
+    // 参数形状取自上游 schema 的 ThreadDeleteParams：只有 threadId
+    expect(requests).toEqual([{ method: 'thread/delete', params: { threadId: 't1' } }]);
+  });
+
+  // REQ: 会话归档与删除 / Scenario: 归档不弹确认直接执行（app-server 层）
+  it('sends_thread_archive_with_thread_id', async () => {
+    const { client, requests } = makeClient();
+    const api = createThreadApi(client);
+
+    await api.archiveThread('t1');
+
+    expect(requests).toEqual([{ method: 'thread/archive', params: { threadId: 't1' } }]);
+  });
+
+  // REQ: 会话归档与删除 / Scenario: 取消归档（app-server 层）
+  it('sends_thread_unarchive_with_thread_id', async () => {
+    const { client, requests } = makeClient();
+    const api = createThreadApi(client);
+
+    await api.unarchiveThread('t1');
+
+    expect(requests).toEqual([{ method: 'thread/unarchive', params: { threadId: 't1' } }]);
+  });
+
+  // REQ: 树视图分组 / Scenario: 已归档的会话只出现在已归档分组（列表来源）
+  it('lists_archived_threads_when_asked', async () => {
+    const { client, requests } = makeClient();
+    const api = createThreadApi(client);
+
+    await api.listThreads({ archived: true });
+    await api.listThreads();
+
+    expect(requests[0]!.params).toMatchObject({ archived: true });
+    // 不传时仍然只列未归档，避免已归档会话混进「最近/历史」
+    expect(requests[1]!.params).toMatchObject({ archived: false });
+  });
+
   it('passes_search_term_to_server', async () => {
     const { client, requests } = makeClient();
     const api = createThreadApi(client);
