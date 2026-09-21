@@ -64,6 +64,7 @@ Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切�
 
 - **数据源**：以 stdio 启动 `codex app-server`，走 NDJSON JSON-RPC，使用 `thread/list`、`thread/loaded/list`、`thread/name/set`、`thread/turns/list` 四个方法。
 - **打开会话**：构造 Codex 内部的会话 URI（`openai-codex://route/local/<id>`），用 `vscode.openWith` 交给 `chatgpt.conversationEditor`。Codex 的自定义编辑器不允许同一文档开多个编辑器，所以「聚焦已打开的」和「打开已关闭的」是同一次调用。
+- **新建会话**：同样走 `vscode.openWith`，打开 Codex 的 new-panel 路由 `/extension/panel/new`，但每次额外带一个 `?newPanel=<随机值>` 的 query。Codex 自己的 `chatgpt.newCodexPanel` 用的是固定 resource，在「同一文档只允许一个编辑器」的限制下连点只会聚焦同一个标签；换个 query 等于换个 resource，才能真正多开。
 - **已打开分组**：扫描 `window.tabGroups`，识别 view type 为 `chatgpt.conversationEditor` 的标签页并解析出会话 id；还没绑定会话的新面板也会作为未命名会话列出。
 - **二进制解析**：`codexHelper.codexExecutable` → `chatgpt.cliExecutable` → `<codex 扩展>/bin/<os>-<arch>/codex`，与 Codex 扩展自身的解析顺序保持一致。
 - **运行状态判定**：某个会话「正在跑」的判据是「最新回合没有终止记录」**且**「它的 rollout 文件被存活的 codex app-server 进程持有」。Linux 上归属探测通过扫描 `/proc/<pid>/fd` 得到，不依赖时间阈值，长思考的回合不会被误判为已停止；macOS / Windows 无法探测归属，退化为「最近 `runningStaleSeconds` 秒内有过写入」的时间近似。扩展监听 rollout 文件的写入来即时重算，监听建立失败时用 `runningPollSeconds` 轮询兜底。
@@ -74,6 +75,7 @@ Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切�
 - 置顶的会话如果在服务端已不存在，会被静默丢弃，不会留下空行。
 - 「加载更多」目前只在命令面板里，树底部没有额外的按钮节点。
 - 打开会话失败时只报错，不会退回「新建空会话」——那样看起来像成功，实际会丢掉用户的对话。
+- 「新建会话」复刻了 Codex 的 new-panel 路由与 `newPanel` query（见「工作原理」）。如果 Codex 升级后改了这条路由、或不再容忍 query，症状是 `+` 开出一个空白/异常页面；此时应改回委派 `chatgpt.newCodexPanel`（代价是只能开一个）。
 - 回退到 Codex 自带二进制时，只支持 `x64` / `arm64` 架构上的 Windows、macOS 和类 Unix 系统；其他平台请用 `codexHelper.codexExecutable` 显式指定路径。
 - 运行判定在 macOS / Windows 上只是时间近似：长思考的回合若超过 `runningStaleSeconds`（默认 300 秒）没有写入，会被显示为非运行中。Linux 上没有这个问题。
 - 一个会话同时出现在「已打开」与「置顶」两组时会有两行，各自记住自己的折叠与选中状态——它们用不同的树节点 id，这是刻意为之，否则 VS Code 会拿同一个 id 同时管两行。

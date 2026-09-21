@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync, readlinkSync, watch } from 'node:fs';
 import * as vscode from 'vscode';
 import { createAppServerClient, type AppServerClient } from './codex/appServerClient';
@@ -144,6 +145,8 @@ export function activate(context: vscode.ExtensionContext): void {
     executeCommand: (command: string, ...args: unknown[]) =>
       Promise.resolve(vscode.commands.executeCommand(command, ...args)),
     showErrorMessage: (message: string) => vscode.window.showErrorMessage(message),
+    uriApi: vscode.Uri,
+    createNonce: () => randomUUID(),
   });
 
   context.subscriptions.push(

@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { CODEX_CONVERSATION_VIEW_TYPE, buildNewPanelUri } from './codex/conversationUri';
+import type { UriApi } from './codex/types';
 
 /**
  * Command layer. Everything here is a thin adapter: the interesting logic lives
@@ -64,22 +66,34 @@ export function createRenameSessionCommand(
 }
 
 /**
- * 新建会话：委派 Codex 自己的 `chatgpt.newCodexPanel`（design D12）。
+ * 新建会话：本插件自己打开 Codex 的 new-panel 路由，并在 query 上带一个本次调用
+ * 独有的 nonce（design D28/D29）。
  *
- * 不传参数——Codex 的 handler 是 `async Te => { Te?.source === …, dt.createNewPanel() }`，
- * 参数走可选链所以无参安全；传 `{source: 'sessionsViewPromotion'}` 反而会踩到它自己的推广分支。
+ * 不能再委派 `chatgpt.newCodexPanel`：它的 resource 是常量
+ * `openai-codex://route/extension/panel/new`，而 Codex 注册自定义编辑器时声明
+ * `supportsMultipleEditorsPerDocument: false`——同一 resource 的第二次打开只会把
+ * 已有的标签移过去，于是连点「+」表现为「没反应」。path 保持逐字不变，webview
+ * 的路由才照旧匹配；只让 resource 因 query 而不同。
+ *
  * 这里也不刷新：`extension.ts` 已订阅 `onDidChangeTabs`，新标签出现会自动刷新树。
- * 失败只报错，绝不静默重试或自行新建面板。
+ * 失败只报错，绝不静默回退到别的入口。
  */
 export interface NewSessionCommandDeps {
   executeCommand(command: string, ...args: unknown[]): unknown;
   showErrorMessage(message: string): unknown;
+  uriApi: UriApi;
+  createNonce(): string;
 }
 
 export function createNewSessionCommand(deps: NewSessionCommandDeps): () => Promise<void> {
   return async function newSession(): Promise<void> {
     try {
-      await deps.executeCommand('chatgpt.newCodexPanel');
+      await deps.executeCommand(
+        'vscode.openWith',
+        buildNewPanelUri(deps.uriApi, deps.createNonce()),
+        CODEX_CONVERSATION_VIEW_TYPE,
+        { preview: false },
+      );
     } catch (error) {
       deps.showErrorMessage(`新建会话失败：${reasonOf(error)}`);
     }
