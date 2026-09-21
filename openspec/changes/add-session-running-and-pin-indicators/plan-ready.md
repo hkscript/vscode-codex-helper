@@ -16,6 +16,7 @@
    `d97b060` 是本变更开工前的 HEAD（`[Verified]` `git log` 最新提交 `docs: add README for marketplace listing`）。
 2. 每个 task 的 `Files` 都显式包含 `test-plan.md` 与 `plan-ready.md`——build 要求写回 `🔴 RED` / `✅ PASS` 后缀与 checkbox，不声明会被 enforcement 拦截（archive lessons 坑 2 的处置方式：显式声明而不是绕过 hook）。
 3. 验证命令统一为 `pnpm test`（`vitest run`）与 `pnpm typecheck`（`tsc --noEmit`）。
+4. **`pnpm test -- <名字>` 不会过滤用例**（build 期实测）：pnpm 不把该参数透传给 vitest，结果是跑全量。各 task 下写的 `pnpm test -- xxx` 应理解为「跑到该文件绿」，实际只跑单个文件时用 `npx vitest run` 加测试文件路径。
 
 ### Task 1: 类型扩展与回合列表 API
 - 目标：给 `Thread` 补 `path`、新增 `Turn` / `TurnStatus`、给 `SessionItem` 补 `running`，并在 `ThreadApi` 上新增 `listTurns`
@@ -102,7 +103,7 @@
 - 改动文件：`src/ui/treeProvider.ts` [Verified]（`:84` 的 `preview` 常量与 `:86` 的 `description` 组装）、`test/unit/treeProvider.test.ts` [Verified]
 - 覆盖场景：T-027（重写）, T-030, T-031, INV-003
 - 测试先行：先重写 `pinned_session_description_starts_with_pin_marker`——它的 `toContain('钉住的预览')` / `toBe('普通的预览')` 两条断言与新行为冲突，改为断言 `📌 ` 之后是目录末级名；再写 T-030 / T-031；INV-003 最后写，遍历 design §6.3 的 8 格并带遍历计数护栏
-- 验证方式：`npx vitest run test/unit/treeProvider.test.ts` 先红后绿；`pnpm typecheck`、`pnpm build` 通过
+- 验证方式：只跑 treeProvider 单测（`npx vitest run` + 该测试文件路径）先红后绿；随后 `pnpm test` 全量绿、`pnpm typecheck`、`pnpm build` 通过
 - ⚠️ T-027 的 `🔴 RED` 凭据已在 amend 中清除——断言重写后必须重新走一次 Step 2（见到红）才能标 PASS
 - 确定性：[Verified]（`SessionItem.cwd` 已存在于 `src/codex/types.ts:76`，由 `src/session/sessionStore.ts:76` 填充，无需改类型或 API）
 - [ ] 条目描述由首条消息改为会话目录
