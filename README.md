@@ -1,16 +1,18 @@
 # Codex Session Sidebar
 
-在 VS Code 侧边栏里浏览、打开、重命名和置顶 Codex 会话。
+在 VS Code 侧边栏里浏览、打开、重命名和置顶 Codex 会话，并一眼看出哪个会话正在运行。
 
 Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切换要点好几层。这个扩展把会话列表提到活动栏：一棵树，三个分组，点一下就回到对话。
 
 ## 功能
 
-- **会话树**：活动栏新增「Codex 会话」视图，按 `已打开` / `置顶` / `历史` 三组展示，每组标题右侧显示条数。同一个会话只会出现在一组里，优先级 `已打开 > 置顶 > 历史`。
+- **会话树**：活动栏新增「Codex 会话」视图，按 `已打开` / `置顶` / `历史` 三组展示，每组标题右侧显示条数。「已打开」与「置顶」可以同时包含同一个会话——置顶不会因为会话被打开而失效；「历史」与前两组互斥。
 - **打开会话**：单击树节点即可打开或聚焦对应的 Codex 会话标签页（复用 Codex 自己的会话编辑器，不是只读预览）。
 - **新建会话**：视图标题栏的 `+`，委派 Codex 的新建面板命令。
 - **重命名**：改名通过 `thread/name/set` 写回 Codex，TUI 和官方扩展里同样生效，不是本地别名。
-- **置顶**：常用会话固定在顶部，状态保存在扩展的 `globalState` 里，跨窗口生效。
+- **置顶**：常用会话固定在顶部，状态保存在扩展的 `globalState` 里，跨窗口生效；置顶条目的描述带 `📌` 前缀。
+- **运行中标识**：正在执行回合的会话显示旋转图标（`loading~spin`），一眼看出哪个对话还在跑。
+- **目录名描述**：条目描述显示该会话工作目录的末级目录名（如 `vscode-codex-helper`），比首条消息更能区分同类会话；没有目录信息时不显示描述。
 - **过滤**：按会话名、会话 id 或预览文本筛选，三个分组用同一套匹配规则。
 - **分页加载**：默认拉取最近 50 条，通过 `Codex: 加载更多` 继续往下翻。
 - **自动跟随标签页**：打开/关闭 Codex 标签页时树自动刷新；也可配置定时刷新。
@@ -54,13 +56,17 @@ Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切�
 | `codexHelper.pageSize` | number | `50` | 每次从 `codex app-server` 拉取的会话条数。 |
 | `codexHelper.filterByWorkspaceCwd` | boolean | `false` | 开启后只列出当前工作区目录下的会话。 |
 | `codexHelper.autoRefreshSeconds` | number | `0` | 自动刷新间隔（秒），`0` 表示关闭。 |
+| `codexHelper.showRunningIndicator` | boolean | `true` | 在正在执行回合的会话上显示运行图标。关闭后不再做运行判定，也不监听 rollout 文件。 |
+| `codexHelper.runningStaleSeconds` | number | `300` | 运行状态的过期阈值（秒）。仅用于无法探测进程归属的平台（macOS / Windows）：超过该时长没有写入的会话不再显示为运行中。Linux 上由进程归属判定，不使用该阈值。 |
+| `codexHelper.runningPollSeconds` | number | `5` | 文件监听不可用时的兜底轮询间隔（秒）。`0` 表示关闭兜底轮询。 |
 
 ## 工作原理
 
-- **数据源**：以 stdio 启动 `codex app-server`，走 NDJSON JSON-RPC，使用 `thread/list`、`thread/loaded/list`、`thread/name/set` 三个方法。
+- **数据源**：以 stdio 启动 `codex app-server`，走 NDJSON JSON-RPC，使用 `thread/list`、`thread/loaded/list`、`thread/name/set`、`thread/turns/list` 四个方法。
 - **打开会话**：构造 Codex 内部的会话 URI（`openai-codex://route/local/<id>`），用 `vscode.openWith` 交给 `chatgpt.conversationEditor`。Codex 的自定义编辑器不允许同一文档开多个编辑器，所以「聚焦已打开的」和「打开已关闭的」是同一次调用。
 - **已打开分组**：扫描 `window.tabGroups`，识别 view type 为 `chatgpt.conversationEditor` 的标签页并解析出会话 id；还没绑定会话的新面板也会作为未命名会话列出。
 - **二进制解析**：`codexHelper.codexExecutable` → `chatgpt.cliExecutable` → `<codex 扩展>/bin/<os>-<arch>/codex`，与 Codex 扩展自身的解析顺序保持一致。
+- **运行状态判定**：某个会话「正在跑」的判据是「最新回合没有终止记录」**且**「它的 rollout 文件被存活的 codex app-server 进程持有」。Linux 上归属探测通过扫描 `/proc/<pid>/fd` 得到，不依赖时间阈值，长思考的回合不会被误判为已停止；macOS / Windows 无法探测归属，退化为「最近 `runningStaleSeconds` 秒内有过写入」的时间近似。扩展监听 rollout 文件的写入来即时重算，监听建立失败时用 `runningPollSeconds` 轮询兜底。
 
 ## 已知限制
 
@@ -69,6 +75,8 @@ Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切�
 - 「加载更多」目前只在命令面板里，树底部没有额外的按钮节点。
 - 打开会话失败时只报错，不会退回「新建空会话」——那样看起来像成功，实际会丢掉用户的对话。
 - 回退到 Codex 自带二进制时，只支持 `x64` / `arm64` 架构上的 Windows、macOS 和类 Unix 系统；其他平台请用 `codexHelper.codexExecutable` 显式指定路径。
+- 运行判定在 macOS / Windows 上只是时间近似：长思考的回合若超过 `runningStaleSeconds`（默认 300 秒）没有写入，会被显示为非运行中。Linux 上没有这个问题。
+- 一个会话同时出现在「已打开」与「置顶」两组时会有两行，各自记住自己的折叠与选中状态——它们用不同的树节点 id，这是刻意为之，否则 VS Code 会拿同一个 id 同时管两行。
 
 ## 开发
 
@@ -83,4 +91,4 @@ pnpm typecheck   # tsc --noEmit
 
 ## 许可
 
-MIT
+MIT，许可证全文见仓库根目录的 `LICENSE` 文件。

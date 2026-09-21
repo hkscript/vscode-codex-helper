@@ -1,0 +1,28 @@
+# 源码、测试与构建脚本：运行时只需要 dist/extension.js
+src/**
+test/**
+esbuild.mjs
+tsconfig.json
+vitest.config.ts
+
+# esbuild 已把运行时打进 dist/extension.js，不需要随包分发依赖
+node_modules/**
+
+# 开发流程与文档（marketplace 页面只读 README.md）
+.openflow/**
+openspec/**
+docs/**
+.vscode/**
+
+# 锁文件与包管理器配置
+pnpm-lock.yaml
+pnpm-workspace.yaml
+
+# 生成 icon.png 的脚本（只发布产物本身）
+resources/icon.gen.py
+
+# 其他不入包的内容
+**/*.test.ts
+**/*.map
+.gitignore
+*.vsix
