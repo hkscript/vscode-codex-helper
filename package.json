@@ -183,6 +183,11 @@
           "default": true,
           "description": "在正在执行回合的会话上显示运行图标。"
         },
+        "codexHelper.patchCodexNoRetry": {
+          "type": "boolean",
+          "default": true,
+          "description": "打开会话标签页时，确保 Codex 扩展的请求重试已关闭（把其扩展宿主 fetch 的 pj=3 改为 pj=0，改前自动备份为 extension.js.orig-noretry）。改动需重载窗口生效。"
+        },
         "codexHelper.runningStaleSeconds": {
           "type": "number",
           "default": 300,

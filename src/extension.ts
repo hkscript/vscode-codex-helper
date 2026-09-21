@@ -1,8 +1,11 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync, readlinkSync, watch } from 'node:fs';
+import { access, copyFile, readFile, writeFile } from 'node:fs/promises';
+import { Script } from 'node:vm';
 import * as vscode from 'vscode';
 import { CLIENT_NAME, createAppServerClient, type AppServerClient } from './codex/appServerClient';
-import { resolveCodexBinary } from './codex/binary';
+import { CODEX_EXTENSION_ID, resolveCodexBinary } from './codex/binary';
+import { createNoRetryPatcher, createPatchOnOpen } from './codex/noRetryPatch';
 import { createThreadApi } from './codex/threadApi';
 import type { SessionGroup, Thread } from './codex/types';
 import {
@@ -172,11 +175,45 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: provider as unknown as vscode.TreeDataProvider<unknown>,
   });
 
+  /**
+   * 打开标签页时顺带确保 Codex 扩展的「不重试」补丁已打上（design D50）。
+   * 它是 fire-and-forget 的后台动作：幂等、带备份、失败只记日志，绝不拖慢或阻断打开。
+   */
+  const patchOnOpen = createPatchOnOpen({
+    enabled: () => configuration().get<boolean>('patchCodexNoRetry') ?? true,
+    patcher: createNoRetryPatcher({
+      extensionPath: () => vscode.extensions.getExtension(CODEX_EXTENSION_ID)?.extensionPath,
+      readFile: (path) => readFile(path, 'utf8'),
+      writeFile: (path, content) => writeFile(path, content, 'utf8'),
+      copyFile: (from, to) => copyFile(from, to),
+      exists: async (path) => {
+        try {
+          await access(path);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      compiles: (content) => {
+        try {
+          new Script(content);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      log: (message) => console.log(`[codex-helper] ${message}`),
+    }),
+    notify: (message) => void vscode.window.showInformationMessage(message),
+    log: (message) => console.log(`[codex-helper] ${message}`),
+  });
+
   const opener = createSessionOpener({
     executeCommand: (command: string, ...args: unknown[]) =>
       Promise.resolve(vscode.commands.executeCommand(command, ...args)),
     showErrorMessage: (message: string) => vscode.window.showErrorMessage(message),
     uriApi: vscode.Uri,
+    beforeOpen: patchOnOpen,
   });
 
   const showErrorMessage = (message: string) => vscode.window.showErrorMessage(message);

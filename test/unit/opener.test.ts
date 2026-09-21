@@ -89,4 +89,37 @@ describe('opener', () => {
     // 绝不回退成「新建会话」（D9/D30）
     expect(executeCommand.mock.calls.map((call) => call[0])).not.toContain('chatgpt.newCodexPanel');
   });
+
+  it('runs_before_open_hook_on_both_open_paths', async () => {
+    const beforeOpen = vi.fn();
+    const opener = createSessionOpener({
+      executeCommand: async () => undefined,
+      showErrorMessage: () => undefined,
+      uriApi,
+      beforeOpen,
+    });
+
+    await opener.openSession('conv-1');
+    await opener.revealTab(uriApi.file('/local/conv-1'));
+
+    expect(beforeOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it('before_open_hook_failure_does_not_block_opening', async () => {
+    const executeCommand = vi.fn(async (_command: string, ..._args: unknown[]) => undefined);
+    const showErrorMessage = vi.fn((_message: string) => undefined);
+    const opener = createSessionOpener({
+      executeCommand,
+      showErrorMessage,
+      uriApi,
+      beforeOpen: () => {
+        throw new Error('patch hook exploded');
+      },
+    });
+
+    await expect(opener.openSession('conv-7')).resolves.toBe(true);
+    expect(executeCommand).toHaveBeenCalledTimes(1);
+    // 钩子的错误不算打开失败，也不该弹给用户
+    expect(showErrorMessage).not.toHaveBeenCalled();
+  });
 });
