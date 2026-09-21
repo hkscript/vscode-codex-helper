@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createNewSessionCommand, createRenameSessionCommand } from '../../src/commands';
+import {
+  createArchiveSessionCommand,
+  createDeleteSessionCommand,
+  createNewSessionCommand,
+  createRenameSessionCommand,
+  createUnarchiveSessionCommand,
+} from '../../src/commands';
 import type { UriLike } from '../../src/codex/types';
 import { createFakeUriApi } from '../helpers/fakes';
 
@@ -42,6 +48,29 @@ function resourceKey(uri: UriLike): string {
 }
 
 describe('commands', () => {
+  /** 三个会话动作命令共用：记录 RPC、可注入失败、记录错误提示。 */
+  function makeSessionActionDeps(options: { failWith?: Error } = {}) {
+    const calls: Array<{ method: string; threadId: string }> = [];
+    const record = (method: string) =>
+      vi.fn(async (threadId: string) => {
+        if (options.failWith) throw options.failWith;
+        calls.push({ method, threadId });
+      });
+    const showErrorMessage = vi.fn((_message: string) => undefined);
+    return {
+      deps: {
+        threadApi: {
+          archiveThread: record('archiveThread'),
+          unarchiveThread: record('unarchiveThread'),
+          deleteThread: record('deleteThread'),
+        },
+        showErrorMessage,
+      },
+      calls,
+      showErrorMessage,
+    };
+  }
+
   it('sets_thread_name_on_rename', async () => {
     const { deps, renames, showInputBox } = makeDeps({ answer: '价格排查' });
     const renameSession = createRenameSessionCommand(deps);
@@ -131,5 +160,75 @@ describe('commands', () => {
 
     expect(showErrorMessage).toHaveBeenCalledTimes(1);
     expect(String(showErrorMessage.mock.calls[0]![0])).toContain('no custom editor registered');
+  });
+
+  // REQ: 会话归档与删除 / Scenario: 归档不弹确认直接执行（命令层）
+  it('archives_session_without_confirmation', async () => {
+    const { deps, calls, showErrorMessage } = makeSessionActionDeps();
+    const archiveSession = createArchiveSessionCommand(deps);
+
+    await expect(archiveSession({ sessionId: 't1' })).resolves.toBe(true);
+
+    expect(calls).toEqual([{ method: 'archiveThread', threadId: 't1' }]);
+    // 归档可逆 ⇒ 不弹确认；命令依赖里也没有任何确认/输入入口
+    expect(showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  // REQ: 会话归档与删除 / Scenario: 删除已归档会话不弹确认直接执行（命令层）
+  it('deletes_archived_session_without_confirmation', async () => {
+    const { deps, calls, showErrorMessage } = makeSessionActionDeps();
+    const deleteSession = createDeleteSessionCommand(deps);
+
+    await expect(deleteSession({ sessionId: 't1' })).resolves.toBe(true);
+
+    // 删除只对已归档条目开放（菜单层限制），命令本身不弹确认、直接执行
+    expect(calls).toEqual([{ method: 'deleteThread', threadId: 't1' }]);
+    expect(showErrorMessage).not.toHaveBeenCalled();
+
+    // 没有会话 id 时不发请求（右键菜单在某些位置会传空节点）
+    await expect(deleteSession(undefined)).resolves.toBe(false);
+    expect(calls).toHaveLength(1);
+  });
+
+  // REQ: 会话归档与删除 / Scenario: 取消归档（命令层）
+  it('unarchives_session', async () => {
+    const { deps, calls, showErrorMessage } = makeSessionActionDeps();
+    const unarchiveSession = createUnarchiveSessionCommand(deps);
+
+    await expect(unarchiveSession({ sessionId: 't1' })).resolves.toBe(true);
+
+    expect(calls).toEqual([{ method: 'unarchiveThread', threadId: 't1' }]);
+    expect(showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  // REQ: 会话归档与删除 / Scenario: 归档失败时报错且不改变本地状态
+  it('shows_error_when_archive_fails', async () => {
+    const { deps, calls, showErrorMessage } = makeSessionActionDeps({
+      failWith: new Error('thread not found'),
+    });
+    const archiveSession = createArchiveSessionCommand(deps);
+
+    // 失败 ⇒ 返回「没做成」，调用方据此不做任何清理
+    await expect(archiveSession({ sessionId: 't1' })).resolves.toBe(false);
+
+    expect(calls).toEqual([]);
+    expect(showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(String(showErrorMessage.mock.calls[0]![0])).toContain('归档会话失败');
+    expect(String(showErrorMessage.mock.calls[0]![0])).toContain('thread not found');
+  });
+
+  // REQ: 会话归档与删除 / Scenario: 删除失败时报错且不改变本地状态
+  it('shows_error_when_delete_fails', async () => {
+    const { deps, calls, showErrorMessage } = makeSessionActionDeps({
+      failWith: new Error('invalid thread id'),
+    });
+    const deleteSession = createDeleteSessionCommand(deps);
+
+    await expect(deleteSession({ sessionId: 't1' })).resolves.toBe(false);
+
+    expect(calls).toEqual([]);
+    expect(showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(String(showErrorMessage.mock.calls[0]![0])).toContain('删除会话失败');
+    expect(String(showErrorMessage.mock.calls[0]![0])).toContain('invalid thread id');
   });
 });

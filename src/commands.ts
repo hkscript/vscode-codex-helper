@@ -23,6 +23,9 @@ export interface CommandHandlers {
   openSession(node: { sessionId?: string } | undefined): Promise<void> | void;
   renameSession(node: RenameSessionNode | undefined): Promise<void> | void;
   newSession(): Promise<void> | void;
+  archiveSession(node: { sessionId?: string } | undefined): Promise<void> | void;
+  unarchiveSession(node: { sessionId?: string } | undefined): Promise<void> | void;
+  deleteSession(node: { sessionId?: string } | undefined): Promise<void> | void;
   pinSession(node: { sessionId?: string } | undefined): Promise<void> | void;
   unpinSession(node: { sessionId?: string } | undefined): Promise<void> | void;
   setFilter(): Promise<void> | void;
@@ -100,6 +103,72 @@ export function createNewSessionCommand(deps: NewSessionCommandDeps): () => Prom
   };
 }
 
+/**
+ * 「归档 / 取消归档 / 删除」三个命令同构：只注入 `threadApi` 与 `showErrorMessage`，
+ * **没有任何确认/输入依赖**——用户明确要求这三个动作不弹确认框，「命令层根本没有
+ * 弹框入口」就是这条要求的实现保证（而不是靠约定）。
+ *
+ * 返回值告诉调用方「真的做成了」：只有 `true` 才允许后续清理（关闭标签、取消置顶、
+ * 刷新列表）。失败只报错并把异常挡在命令层内（与 rename 同一条线）。
+ */
+export interface SessionActionDeps {
+  perform(threadId: string): Promise<void>;
+  showErrorMessage(message: string): unknown;
+  /** 失败提示里的动作名（「归档」「取消归档」「删除」）。 */
+  actionLabel: string;
+}
+
+export function createSessionActionCommand(
+  deps: SessionActionDeps,
+): (node: { sessionId?: string } | undefined) => Promise<boolean> {
+  return async function runSessionAction(node): Promise<boolean> {
+    const sessionId = node?.sessionId;
+    if (!sessionId) return false;
+    try {
+      await deps.perform(sessionId);
+      return true;
+    } catch (error) {
+      deps.showErrorMessage(`${deps.actionLabel}会话失败：${reasonOf(error)}`);
+      return false;
+    }
+  };
+}
+
+export interface ThreadActionCommandDeps {
+  threadApi: { archiveThread(threadId: string): Promise<void> };
+  showErrorMessage(message: string): unknown;
+}
+
+export function createArchiveSessionCommand(deps: ThreadActionCommandDeps) {
+  return createSessionActionCommand({
+    perform: (threadId) => deps.threadApi.archiveThread(threadId),
+    showErrorMessage: deps.showErrorMessage,
+    actionLabel: '归档',
+  });
+}
+
+export function createUnarchiveSessionCommand(deps: {
+  threadApi: { unarchiveThread(threadId: string): Promise<void> };
+  showErrorMessage(message: string): unknown;
+}) {
+  return createSessionActionCommand({
+    perform: (threadId) => deps.threadApi.unarchiveThread(threadId),
+    showErrorMessage: deps.showErrorMessage,
+    actionLabel: '取消归档',
+  });
+}
+
+export function createDeleteSessionCommand(deps: {
+  threadApi: { deleteThread(threadId: string): Promise<void> };
+  showErrorMessage(message: string): unknown;
+}) {
+  return createSessionActionCommand({
+    perform: (threadId) => deps.threadApi.deleteThread(threadId),
+    showErrorMessage: deps.showErrorMessage,
+    actionLabel: '删除',
+  });
+}
+
 export function registerCommands(handlers: CommandHandlers): vscode.Disposable[] {
   return [
     vscode.commands.registerCommand('codexHelper.refresh', () => handlers.refresh()),
@@ -107,6 +176,15 @@ export function registerCommands(handlers: CommandHandlers): vscode.Disposable[]
       handlers.openSession(node),
     ),
     vscode.commands.registerCommand('codexHelper.newSession', () => handlers.newSession()),
+    vscode.commands.registerCommand('codexHelper.archiveSession', (node: { sessionId?: string }) =>
+      handlers.archiveSession(node),
+    ),
+    vscode.commands.registerCommand('codexHelper.unarchiveSession', (node: { sessionId?: string }) =>
+      handlers.unarchiveSession(node),
+    ),
+    vscode.commands.registerCommand('codexHelper.deleteSession', (node: { sessionId?: string }) =>
+      handlers.deleteSession(node),
+    ),
     vscode.commands.registerCommand('codexHelper.renameSession', (node: RenameSessionNode) =>
       handlers.renameSession(node),
     ),
