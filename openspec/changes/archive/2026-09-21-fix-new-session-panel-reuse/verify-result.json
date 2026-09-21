@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "change": "fix-new-session-panel-reuse",
+  "head": "7ea06de25e597bb57d4d5cf62972185bdb5e79fd",
+  "fingerprint": "sha256:a22c8b6ff819d6c654348ec1a32b96b815f769e552f8ad9fa9bd8f429c59beb8",
+  "testRuns": [
+    {
+      "name": "full-suite",
+      "exitCode": 0
+    }
+  ],
+  "scenarioCoverage": {
+    "mapped": 5,
+    "total": 5
+  },
+  "designConsistency": {
+    "pass": true,
+    "blockers": []
+  },
+  "userConfirmation": {
+    "received": true
+  }
+}

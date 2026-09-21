@@ -1,0 +1,2 @@
+- [x] Task 1: new-panel URI 契约
+- [x] Task 2: 新建会话命令改为自建 URI + 接线
