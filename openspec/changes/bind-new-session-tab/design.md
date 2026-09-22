@@ -45,6 +45,14 @@
 
 命中后：`tabGroups.close(tab)` → `openWith(tab 自己的 uri)`，并记下 `synced.set(id, expected)`。
 
+触发（三条并行，都不能省）：
+
+1. `load()` 之后 —— 数据最新，零额外请求；
+2. `tabGroups.onDidChangeTabs` —— 切标签/开关标签时直接跑，**不依赖树可见**；
+3. 兜底轮询 —— 存在候选标签时每 3 秒复查、5 分钟封顶（事件可能因为「侧边栏没被重新读取」而漏掉，线上就是这么漏的）。
+
+候选会话不在本地缓存（`threads`）里时，同步自己拉一次 `thread/list`，不去指望 `load()`。
+
 对应的上游标题规则复刻为一个函数：
 
 ```ts

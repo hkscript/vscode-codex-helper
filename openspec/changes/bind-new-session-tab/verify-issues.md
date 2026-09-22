@@ -25,6 +25,7 @@
 | `waitForChildExit` 若在 `dispose()` 之后才挂监听，进程先退出就白等一个 2s 超时（单测 T-119 实测 2006ms） | 改成**先挂监听再 kill**，T-119 恢复到毫秒级 | `[Verified]` |
 | 标题同步的判定必须要求标签**带句柄**（否则关不掉），这条前提在最初的纯函数里漏了 | 写入 `planTabTitleSync`，并补 fixture 句柄 | `[Verified]` |
 | **用户实测反馈**：在非 git 仓库目录（`/home/hk/ai/hxg21day`）里点 `+` 后标题不更新 | 定位：该目录不是 git 仓库 ⇒ 原设计直接回退空白面板（回退面板解析不出会话 id，标题同步天然覆盖不到）。改为非 git 目录写全零 sha 占位继续建会话（`PLACEHOLDER_GIT_INFO`），并补 T-124/T-125 两条用例 + probe20 端到端验证 | `[Verified]` |
+| **第二次实测反馈**：0.0.11 装好后标题仍不更新 | 用现场数据定位（用户窗口 `exthost11` 的 Codex 日志 + 真实 `~/.codex`）：建会话这条路是**好的**（16:17:32 建出的会话带全零 sha 占位、面板 16:17:36 `maybe_resume_success`、turn 完成、`getConversationSummary` 返回 preview `你好`）。坏的是同步的**触发**：它只挂在树的 `load()` 上，侧边栏没被重新读取就不会跑。改为三条独立触发（列表刷新 / `onDidChangeTabs` / 3 秒×5 分钟兜底轮询）+ 候选不在缓存时自行拉列表，并补 T-126 | `[Verified]` |
 
 ## 未做（明确排除）
 

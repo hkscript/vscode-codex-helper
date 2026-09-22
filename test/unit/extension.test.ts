@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { activate } from '../../src/extension';
+import { activate, deactivate } from '../../src/extension';
 import type { UriLike } from '../../src/codex/types';
 import { PIN_STATE_KEY } from '../../src/session/pinStore';
 import {
@@ -225,6 +225,12 @@ function answerRenameWith(name: string): void {
 }
 
 describe('extension', () => {
+  // 每个用例结束时回收定时器与 app-server：标题同步的兜底轮询是模块级的，
+  // 不回收会串到下一个用例（实测 T-126 单独跑绿、整文件跑红就是这么来的）
+  afterEach(() => {
+    deactivate();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     refreshes = 0;
@@ -499,5 +505,34 @@ describe('extension', () => {
     ).mock.calls[0]!;
     expect(command).toBe('vscode.openWith');
     expect(uri.path).toBe('/local/tid-nogit');
+  });
+
+  // REQ: 未标题标签的标题同步 / Scenario: 切标签就能触发（不依赖侧边栏被重新读取）
+  it('title_sync_runs_on_tab_change_without_reloading_the_tree', async () => {
+    // 线上踩过：只挂在树的 load() 上时，侧边栏没被重新读取就永远不跑
+    let tabChangeListener: (() => void) | undefined;
+    (
+      vscode.window.tabGroups.onDidChangeTabs as unknown as { mockImplementation(fn: unknown): void }
+    ).mockImplementation((fn: () => void) => {
+      tabChangeListener = fn;
+      return { dispose: vi.fn() };
+    });
+    interceptTreeView();
+    activate(makeContext() as never);
+
+    const tab = makeTab('t2', 'Codex');
+    (vscode.window.tabGroups.all as unknown[]) = [{ tabs: [tab] }];
+
+    // 树从头到尾没被读取过（没人调 getChildren）：同步必须靠事件自己拿到会话列表
+    tabChangeListener?.();
+    await flush();
+    await answerListRequests([makeThread({ id: 't2', name: '切标签就该同步' })]);
+    await flush();
+
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledWith(tab, true);
+    const openCall = (
+      vscode.commands.executeCommand as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls.find((call) => call[0] === 'vscode.openWith')!;
+    expect((openCall[1] as UriLike).path).toBe('/local/t2');
   });
 });

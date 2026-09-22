@@ -36,3 +36,4 @@ T-122: `test/unit/sessionCreator.test.ts::returns_null_when_resume_fails` ✅ PA
 T-123: `test/unit/tabTitleSync.test.ts::skips_sessions_that_are_not_in_the_list` ✅ PASS
 T-124: `test/unit/sessionCreator.test.ts::placeholder_git_info_is_a_non_empty_sha_so_codex_can_persist` ✅ PASS
 T-125: `test/unit/extension.test.ts::new_session_still_binds_in_a_non_git_workspace` ✅ PASS
+T-126: `test/unit/extension.test.ts::title_sync_runs_on_tab_change_without_reloading_the_tree` ✅ PASS

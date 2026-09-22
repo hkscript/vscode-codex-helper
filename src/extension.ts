@@ -37,13 +37,17 @@ import {
   type ExitableChild,
   type GitInfo,
 } from './session/sessionCreator';
-import { planTabTitleSync, resourceKey } from './session/tabTitleSync';
+import { CODEX_DEFAULT_TAB_TITLE, planTabTitleSync, resourceKey } from './session/tabTitleSync';
 import { createWriterLockProbe } from './session/writerLock';
 import { createSessionTreeProvider } from './ui/treeProvider';
 
 let appServer: AppServerClient | undefined;
 let autoRefresh: ReturnType<typeof setInterval> | undefined;
 let runningTracker: RunningTracker | undefined;
+/** 标题同步的兜底轮询；模块级是为了让 `deactivate()` 能回收（同 autoRefresh）。 */
+let titleSyncTimer: ReturnType<typeof setInterval> | undefined;
+/** 上面那个定时器的启动时刻：两者必须同生同灭，否则跨窗口/跨激活会互相误判超时。 */
+let titleSyncStartedAt = 0;
 
 /** `vscode.git` 的导出形状（只用到仓库 HEAD 与远端地址两处）。 */
 interface GitRepositoryLike {
@@ -223,8 +227,16 @@ export function activate(context: vscode.ExtensionContext): void {
    * 截断），而 VS Code 不允许外部改别的扩展的标签标题。因此「让标题变对」= 让 Codex
    * 重新 resolve 一次。只在会话空闲、且那个标签不是当前激活标签时动手，避免重载用户
    * 正在看的对话。
+   *
+   * 触发方式有三条，缺一不可（实测踩过坑：只挂在树的 `load()` 上时，侧边栏没被重新读取
+   * 就永远不会跑，用户切走再回来标题照旧）：
+   *  1. `load()` 之后（树重新读取时顺带跑，数据最新，不用额外请求）；
+   *  2. `tabGroups.onDidChangeTabs`（切标签/开关标签时直接跑，不依赖树可见）；
+   *  3. 有界轮询（有候选标签时每 3 秒复查，5 分钟封顶）——事件漏发时兜底。
    */
   const syncedTitles = new Map<string, string>();
+  const TITLE_SYNC_POLL_MS = 3_000;
+  const TITLE_SYNC_MAX_MS = 5 * 60_000;
   let syncingTitles = false;
 
   /** 当前激活标签的 resource 身份（不是 Codex 标签时也返回它的 key，比不中就不会跳过）。 */
@@ -236,6 +248,20 @@ export function activate(context: vscode.ExtensionContext): void {
     return uri && typeof uri.path === 'string' ? resourceKey(uri) : null;
   }
 
+  function stopTitleSyncTimer(): void {
+    if (titleSyncTimer) clearInterval(titleSyncTimer);
+    titleSyncTimer = undefined;
+    titleSyncStartedAt = 0;
+  }
+
+  function ensureTitleSyncTimer(): void {
+    if (titleSyncTimer) return;
+    titleSyncStartedAt = Date.now();
+    titleSyncTimer = setInterval(() => {
+      void syncTabTitles();
+    }, TITLE_SYNC_POLL_MS);
+  }
+
   async function syncTabTitles(): Promise<void> {
     if (syncingTitles) return;
     const tabs = openTabs();
@@ -243,9 +269,42 @@ export function activate(context: vscode.ExtensionContext): void {
     const liveIds = new Set(tabs.map((tab) => tab.id));
     for (const id of [...syncedTitles.keys()]) if (!liveIds.has(id)) syncedTitles.delete(id);
 
+    const pending = tabs.filter(
+      (tab) =>
+        tab.tabLabel === CODEX_DEFAULT_TAB_TITLE &&
+        tab.handle !== undefined &&
+        !syncedTitles.has(tab.id),
+    );
+    if (pending.length === 0) {
+      // 没有候选了（都同步过 / 标签关了）就别再轮询
+      stopTitleSyncTimer();
+      return;
+    }
+    if (titleSyncTimer && Date.now() - titleSyncStartedAt > TITLE_SYNC_MAX_MS) {
+      stopTitleSyncTimer();
+      return;
+    }
+    ensureTitleSyncTimer();
+
+    // 树可能压根没被重新读取（侧边栏隐藏、只是切了个标签），缓存里的会话列表就是旧的：
+    // 候选会话不在缓存里就自己拉一次，别指望 load()。
+    let list = threads;
+    if (pending.some((tab) => !list.some((thread) => thread.id === tab.id))) {
+      try {
+        const page = await api().listThreads({
+          searchTerm: filter,
+          cwd: workspaceCwd(),
+          cursor: null,
+        });
+        list = page.data;
+      } catch {
+        return;
+      }
+    }
+
     const plan = planTabTitleSync({
       tabs,
-      threads,
+      threads: list,
       runningIds: tracker?.snapshot() ?? null,
       activeTabKey: activeTabResourceKey(),
       synced: syncedTitles,
@@ -520,7 +579,11 @@ export function activate(context: vscode.ExtensionContext): void {
         provider.refresh();
       },
     }),
-    vscode.window.tabGroups.onDidChangeTabs(() => provider.refresh()),
+    vscode.window.tabGroups.onDidChangeTabs(() => {
+      provider.refresh();
+      // 不依赖「树被重新读取」：切标签/开关标签时直接跑一次标题同步
+      void syncTabTitles();
+    }),
   );
 
   const seconds = configuration().get<number>('autoRefreshSeconds') ?? 0;
@@ -533,6 +596,12 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {
   if (autoRefresh) clearInterval(autoRefresh);
   autoRefresh = undefined;
+  // 标题同步的轮询定时器同样不能活过扩展宿主
+  if (titleSyncTimer) {
+    clearInterval(titleSyncTimer);
+    titleSyncTimer = undefined;
+  }
+  titleSyncStartedAt = 0;
   // inotify 句柄与轮询定时器不回收会比扩展活得更久。
   runningTracker?.dispose();
   runningTracker = undefined;
