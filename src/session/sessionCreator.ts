@@ -28,10 +28,25 @@ export interface GitInfo {
   originUrl?: string;
 }
 
+/**
+ * 非 git 工作区的占位值：`thread/metadata/update` 要求至少一个字段，而它是唯一能让 Codex
+ * 把 rollout 落盘的**非破坏性**写入（见文件头）。
+ *
+ * 用全零 sha 而不是编一个分支名，原因有二：
+ *  1. 全零对象 id 在 git 里就是「没有对象」的规范写法，语义上最接近"这里没有 git 信息"；
+ *  2. Codex 前端只读 `gitInfo.branch` / `originUrl`（webview bundle：
+ *     `e?.branch?.trim()` / `e?.originUrl?.trim()`），sha 不会出现在任何界面上，
+ *     所以这个占位对用户不可见。
+ */
+export const PLACEHOLDER_GIT_INFO: GitInfo = { sha: '0'.repeat(40) };
+
 export interface CreateBoundSessionOptions {
   /** 会话的工作目录（窗口第一个 workspace folder）；没有就不带 cwd。 */
   cwd: string | null;
-  /** 探测不到（不是 git 仓库）时传 `null`：宁可不建，也不建一个面板打不开的空会话。 */
+  /**
+   * 落盘触发器要写的 git 信息：能探测到就写真实的，探测不到（不是 git 仓库）传
+   * `PLACEHOLDER_GIT_INFO`。传 `null` 会直接放弃建会话（调用方应改用占位值）。
+   */
   gitInfo: GitInfo | null;
 }
 

@@ -24,6 +24,7 @@
 | `thread/settings/update`、`thread/increment_elicitation` 需要 `experimentalApi` capability | 排除这两条路 | `[Verified]` |
 | `waitForChildExit` 若在 `dispose()` 之后才挂监听，进程先退出就白等一个 2s 超时（单测 T-119 实测 2006ms） | 改成**先挂监听再 kill**，T-119 恢复到毫秒级 | `[Verified]` |
 | 标题同步的判定必须要求标签**带句柄**（否则关不掉），这条前提在最初的纯函数里漏了 | 写入 `planTabTitleSync`，并补 fixture 句柄 | `[Verified]` |
+| **用户实测反馈**：在非 git 仓库目录（`/home/hk/ai/hxg21day`）里点 `+` 后标题不更新 | 定位：该目录不是 git 仓库 ⇒ 原设计直接回退空白面板（回退面板解析不出会话 id，标题同步天然覆盖不到）。改为非 git 目录写全零 sha 占位继续建会话（`PLACEHOLDER_GIT_INFO`），并补 T-124/T-125 两条用例 + probe20 端到端验证 | `[Verified]` |
 
 ## 未做（明确排除）
 

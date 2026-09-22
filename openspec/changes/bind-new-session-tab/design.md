@@ -15,7 +15,7 @@
 ```
 点击 +
   ├─ 探测 gitInfo（工作区第一个 folder 的 HEAD/remote）
-  │     └─ 探测不到 → 回退：openWith(newPanelUri(nonce))   ← 今天的行为
+  │     └─ 探测不到 → 用全零 sha 占位（Codex 前端只读 branch/originUrl，占位不可见）
   ├─ 起一个一次性 codex app-server 子进程
   │     initialize → thread/start {cwd} → thread/metadata/update {gitInfo} → thread/resume
   │     （resume 让 Codex 自己把 rollout 头落盘，≈18KB）
@@ -25,7 +25,7 @@
 
 为什么落盘必须在**一次性进程**里做：`thread/resume` 会持有该会话的 writer 锁，只要那个进程活着，Codex 面板（另一个 app-server 进程）的 resume 就会被拒 `already has an active writer`；`thread/unsubscribe` 实测放不掉。用一次性进程，锁随进程退出而释放。
 
-为什么必须写 `gitInfo` 才能落盘：`thread/start` 后直接 resume 报 `no rollout found`；任何一次成功的状态写入（`metadata/update` 或 `name/set`）之后 resume 才会成功。`name/set` 会把会话名固定住、顶掉 Codex 的自动标题，所以只能用 `metadata/update`；而它要求至少一个字段，所以只能写**真实**的 git 信息（branch/sha/originUrl，取到什么写什么）。
+为什么必须写 `gitInfo` 才能落盘：`thread/start` 后直接 resume 报 `no rollout found`；一次成功的 `metadata/update` 之后 resume 才会成功。`name/set` 会把会话名固定住、顶掉 Codex 的自动标题，所以不能用；`settings/update`、`increment_elicitation`、`resume{history/path}` 要么要求 `experimentalApi`、要么根本不是有效触发器（都实测过）。于是只剩 `metadata/update`，而它要求至少一个字段：能探测到真实 git 信息就写真实的，探测不到就写**全零 sha 占位**（`0…0`，git 里表示「没有对象」；Codex 前端只读 `branch`/`originUrl`，sha 不上界面）。
 
 空会话不会进 `thread/list`，所以"点了 + 没聊就关掉"不会在侧边栏留下垃圾行。
 
@@ -58,7 +58,7 @@ export function expectedTabTitle(thread): string | null {
 
 ## 4. 边界与取舍
 
-- **回退**：不是 git 仓库、拿不到 HEAD/remote、建会话任一步失败 → 走空白面板（今天的行为），只是没有 20% 的新体验，功能不残。
+- **回退**：只有建会话任一步失败（子进程起不来、`thread/start`/`metadata/update`/`resume` 报错）才走空白面板（今天的行为）；「目录没有 git」不再触发回退。
 - **代价**：`+` 多一次子进程（intialize + 3 个请求 + 退出）；第一次同步时标签会重载一次（草稿/滚动位置丢失，会话内容不丢）。
 - **不做**：清理"建了但没用"的空会话文件（`thread/list` 不显示，仅占磁盘）；不修会话改名后旧标签的标题漂移。
 - **上游依赖**：`start → metadata/update → resume` 这条"让 Codex 自己落盘"的顺序是实测行为，不是文档承诺；任何一步变了就退化成空白面板（可接受），因此不引入新的失败模式。

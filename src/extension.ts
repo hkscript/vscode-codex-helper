@@ -30,7 +30,13 @@ import { createPinStore } from './session/pinStore';
 import { scanHeldRollouts } from './session/processScan';
 import { createRunningTracker, type RunningTracker } from './session/runningTracker';
 import { buildSessionGroups } from './session/sessionStore';
-import { createBoundSession, waitForChildExit, type ExitableChild, type GitInfo } from './session/sessionCreator';
+import {
+  PLACEHOLDER_GIT_INFO,
+  createBoundSession,
+  waitForChildExit,
+  type ExitableChild,
+  type GitInfo,
+} from './session/sessionCreator';
 import { planTabTitleSync, resourceKey } from './session/tabTitleSync';
 import { createWriterLockProbe } from './session/writerLock';
 import { createSessionTreeProvider } from './ui/treeProvider';
@@ -103,7 +109,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   /**
    * 工作区第一个 folder 的真实 git 信息；探测不到（不是 git 仓库 / 没有 git 扩展）时
-   * 返回 `null`，调用方据此放弃「直接建会话」并回退空白面板。
+   * 返回 `null` —— 调用方会退回 `PLACEHOLDER_GIT_INFO`，因为**建会话本身不能因为
+   * "这个目录没有 git" 而失效**（用户要的正是"任何目录下新建的会话标签都能拿到标题"）。
    *
    * `thread/metadata/update` 要求至少一个字段，而它是唯一**非破坏性**的落盘触发器：
    * `thread/name/set` 也能让 resume 成功，但会把会话名固定住、顶掉 Codex 的自动标题。
@@ -139,8 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
    * 必须由一个马上退出的进程来做，锁随进程消失。
    */
   async function createBoundSessionInOneShot(): Promise<string | null> {
-    const gitInfo = await gitInfoForWorkspace();
-    if (!gitInfo) return null;
+    const gitInfo = (await gitInfoForWorkspace()) ?? PLACEHOLDER_GIT_INFO;
 
     let spawned: ChildProcessLike | undefined;
     const oneShot = createAppServerClient({

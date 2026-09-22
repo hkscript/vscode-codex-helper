@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createBoundSession, waitForChildExit } from '../../src/session/sessionCreator';
+import {
+  PLACEHOLDER_GIT_INFO,
+  createBoundSession,
+  waitForChildExit,
+} from '../../src/session/sessionCreator';
 import { createFakeChildProcess } from '../helpers/fakes';
 
 /**
@@ -86,6 +90,19 @@ describe('sessionCreator', () => {
     // 没有 gitInfo 就落不了盘：宁可不建，也不要建出一个面板打不开的空会话
     await expect(createBoundSession(client, { cwd: '/repo', gitInfo: null })).resolves.toBeNull();
     expect(client.calls).toEqual([]);
+  });
+
+  it('placeholder_git_info_is_a_non_empty_sha_so_codex_can_persist', async () => {
+    // 非 git 目录靠这个占位值落盘：它必须至少有一个字段（否则 app-server 直接拒），
+    // 又必须不写分支名（Codex 前端会把 branch 显示出来），所以只能是全零 sha。
+    expect(PLACEHOLDER_GIT_INFO).toEqual({ sha: '0'.repeat(40) });
+
+    const client = makeClient(() => ({ thread: { id: 'thread-6' } }));
+    await createBoundSession(client, { cwd: '/tmp/not-a-repo', gitInfo: PLACEHOLDER_GIT_INFO });
+    expect(client.calls[2]!.params).toEqual({
+      threadId: 'thread-6',
+      gitInfo: { sha: '0'.repeat(40) },
+    });
   });
 
   it('returns_null_when_metadata_update_fails', async () => {

@@ -23,7 +23,7 @@ T-112: `test/unit/tabTitleSync.test.ts::skips_already_synced_target_title` 🔴 
 T-113: `test/unit/tabTitleSync.test.ts::skips_tab_that_already_has_a_custom_title` 🔴 RED ✅ PASS
 T-114: `test/unit/tabTitleSync.test.ts::skips_when_running_state_is_unknown` 🔴 RED ✅ PASS
 T-115: `test/unit/commands.test.ts::new_session_opens_bound_tab_when_creation_succeeds` 🔴 RED ✅ PASS
-T-116: `test/unit/commands.test.ts::new_session_falls_back_to_blank_panel_without_git_info` 🔴 RED ✅ PASS
+T-116: `test/unit/commands.test.ts::new_session_falls_back_to_blank_panel_when_creation_returns_null` 🔴 RED ✅ PASS
 T-117: `test/unit/commands.test.ts::new_session_falls_back_to_blank_panel_when_creation_throws` 🔴 RED ✅ PASS
 T-118: `test/unit/openTabs.test.ts::keeps_tab_handle_for_closing` 🔴 RED ✅ PASS
 T-119: `test/unit/extension.test.ts::new_session_command_creates_bound_session_with_one_shot_process` 🔴 RED ✅ PASS
@@ -34,3 +34,5 @@ T-120: `test/unit/extension.test.ts::title_sync_reopens_untitled_tab_of_an_idle_
 T-121: `test/unit/sessionCreator.test.ts::omits_cwd_when_the_workspace_has_none` ✅ PASS
 T-122: `test/unit/sessionCreator.test.ts::returns_null_when_resume_fails` ✅ PASS
 T-123: `test/unit/tabTitleSync.test.ts::skips_sessions_that_are_not_in_the_list` ✅ PASS
+T-124: `test/unit/sessionCreator.test.ts::placeholder_git_info_is_a_non_empty_sha_so_codex_can_persist` ✅ PASS
+T-125: `test/unit/extension.test.ts::new_session_still_binds_in_a_non_git_workspace` ✅ PASS

@@ -212,8 +212,8 @@ describe('commands', () => {
     expect(showErrorMessage).not.toHaveBeenCalled();
   });
 
-  // REQ: 新建会话 / Scenario: 探测不到 gitInfo 时回退空白面板
-  it('new_session_falls_back_to_blank_panel_without_git_info', async () => {
+  // REQ: 新建会话 / Scenario: 建会话失败时回退空白面板
+  it('new_session_falls_back_to_blank_panel_when_creation_returns_null', async () => {
     const { deps, calls, createBoundSession } = makeNewSessionDeps();
     createBoundSession.mockResolvedValue(null);
     const newSession = createNewSessionCommand(deps);

@@ -463,4 +463,41 @@ describe('extension', () => {
     expect((openCall[1] as UriLike).path).toBe('/local/t1');
     expect(openCall[3]).toEqual({ preview: false });
   });
+
+  // REQ: 新建会话 / Scenario: 非 git 工作区仍然建会话并打开绑定标签
+  it('new_session_still_binds_in_a_non_git_workspace', async () => {
+    interceptTreeView();
+    activate(makeContext() as never);
+    // 既没有 vscode.git，也没有 Codex 扩展：探测不到任何真实 git 信息
+    (
+      vscode.extensions.getExtension as unknown as { mockImplementation(fn: unknown): void }
+    ).mockImplementation(() => undefined);
+    (vscode.workspace as { workspaceFolders?: unknown }).workspaceFolders = [
+      { uri: { ...uriApi.file('/tmp/not-a-repo'), fsPath: '/tmp/not-a-repo' } },
+    ];
+
+    const before = (await appServerChildren()).length;
+    const pending = activatedHandler('codexHelper.newSession')();
+    await flush();
+    const oneShot = (await appServerChildren())[before]!;
+    const requests = [
+      ...(await answerChildRound(oneShot)),
+      ...(await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-nogit' } } })),
+      ...(await answerChildRound(oneShot, { 'thread/metadata/update': {} })),
+      ...(await answerChildRound(oneShot, { 'thread/resume': {} })),
+    ];
+    await pending;
+
+    // 「这个目录不是 git 仓库」不该让新建会话退化：写全零 sha 占位照样能落盘，
+    // 而 Codex 前端只读 branch/originUrl，占位在界面上看不见。
+    expect(requests[2]!.params).toEqual({
+      threadId: 'tid-nogit',
+      gitInfo: { sha: '0'.repeat(40) },
+    });
+    const [command, uri] = (
+      vscode.commands.executeCommand as unknown as { mock: { calls: Array<[string, UriLike]> } }
+    ).mock.calls[0]!;
+    expect(command).toBe('vscode.openWith');
+    expect(uri.path).toBe('/local/tid-nogit');
+  });
 });

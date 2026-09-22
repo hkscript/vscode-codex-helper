@@ -15,7 +15,7 @@
 - **`+` 改为「先建会话，再开绑定标签」**：用一次性 `codex app-server` 子进程执行 `thread/start` → `thread/metadata/update {gitInfo}` → `thread/resume`（`resume` 会让 Codex 把 rollout 头落盘），子进程退出后再用 `openai-codex://route/local/<id>` 打开标签。
   - 标签 URI 自带会话 id ⇒ Codex 打开标签时会走它自己的标题路径：先 `summary.preview`，随后异步用 `thread/list` 的 `name?.trim() || preview` 覆盖，超过 30 字符截断加 `…`。标题从此**由 Codex 自己写**，插件不伪造、不猜。
   - 子进程必须退出：`thread/resume` 会持有该会话的 writer 锁，锁没释放时 Codex 面板的 `resume` 会被拒 `already has an active writer`（`thread/unsubscribe` 也放不掉）。
-  - 拿不到 `gitInfo`（工作区不是 git 仓库）或建会话失败时，**回退到现在的空白面板**，行为与今天一致。
+  - 工作区不是 git 仓库时写**全零 sha 占位**继续建会话（Codex 前端只读 `branch`/`originUrl`，占位不上界面）；只有建会话任一步失败时才**回退到现在的空白面板**。
   - **不得**用 `thread/name/set` 当落盘触发器：实测它会把会话名固定住，顶掉 Codex 的自动标题。
 - **新增「未标题标签同步」**：某个已绑定标签的标题仍是 Codex 默认值（`Codex`），而它对应的会话已经出现在列表里且有了标题时，插件在**该会话不运行、该标签不是当前激活标签**的前提下，关闭该标签并**用它自己的 resource 重新打开**——等于给 Codex 一次重新 resolve 的机会，标题由 Codex 写。
   - 目标标题按上游规则计算：`name?.trim() || preview`，为空则不同步；长度 > 30 时截断并追加 `…`。
@@ -50,3 +50,7 @@
 | 落盘进程**存活期间**别的进程 resume 会被拒 `already has an active writer`；`thread/unsubscribe` 无效，进程退出后才放行 | probe：4) FAILED → 5) unsubscribe OK → 6) 仍 FAILED → 7) A 退出后 OK | `[Verified]` |
 | 空会话（只有 session_meta、没有回合）**不会**出现在 `thread/list` 里 | probe：建会话后 `list 条数: 0`（同进程与新进程都为空） | `[Verified]` |
 | `thread/name/set` 会把会话名固定住，首条消息后仍显示所设名字（顶掉自动标题） | probe：name/set("新会话") → turn 完成后 `list` 仍为 `name:"新会话"` | `[Verified]` |
+| `gitInfo.branch` 为空串被拒（`gitInfo.branch must not be empty`），`{sha:"0"×40}` 被接受且随后 resume 成功、rollout 落盘 | probe：`branch-empty` 失败 / `sha-only` + resume OK | `[Verified]` |
+| `thread/increment_elicitation`、`thread/settings/update`、`thread/resume{history/path}` 都不能替代 `metadata/update`：前两者要求 `experimentalApi` 能力，后两者报「requires experimentalApi」/「no rollout found」/「cannot resume with history while it is already running」 | probe15 / probe16 / probe17 / probe18 | `[Verified]` |
+| Codex 前端只用 `gitInfo.branch` 与 `originUrl`（`e?.branch?.trim()` / `e?.originUrl?.trim()`），`sha` 不上界面 | 上游 webview `assets/app-initial-*.js` | `[Verified]` |
+| 非 git 目录下「全零 sha 占位 → 落盘 → 另一个进程 resume → 真实回合」整条链路可用 | probe20：resume OK turns=0、turn/completed、`thread/list` 拿到会话 | `[Verified]` |

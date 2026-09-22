@@ -4,7 +4,7 @@
 
 点击「新建会话」时，插件 SHALL 优先走「直接建会话」：用一次性 `codex app-server` 子进程依次执行 `thread/start`、`thread/metadata/update`（携带工作区真实的 gitInfo）、`thread/resume`，等该子进程退出后，用该会话 id 的会话 URI（`vscode.openWith` + `chatgpt.conversationEditor`）打开标签——使标签从出生就绑定会话，标题由 Codex 自己写。
 
-插件 SHALL NOT 用 `thread/name/set` 作为让 Codex 落盘的触发器。插件 SHALL 在拿不到 gitInfo（工作区不是 git 仓库）、或建会话任一步失败时，回退为打开今天这个空白面板（`/extension/panel/new` 带唯一 nonce）。回退时 SHALL NOT 报错打断用户（建会话失败不是用户动作的失败）。
+插件 SHALL NOT 用 `thread/name/set` 作为让 Codex 落盘的触发器。工作区不是 git 仓库（探测不到真实 gitInfo）时，插件 SHALL 改用**全零 sha 占位**（`PLACEHOLDER_GIT_INFO`）继续建会话 —— 该占位只落在 `gitInfo.sha`，而 Codex 前端只读 `branch` / `originUrl`，故不可见；「目录没有 git」不得让新建会话退化。只有建会话任一步失败时，才回退为打开今天这个空白面板（`/extension/panel/new` 带唯一 nonce），且 SHALL NOT 报错打断用户（建会话失败不是用户动作的失败）。
 
 #### Scenario: 建会话成功后打开绑定标签
 
@@ -13,12 +13,18 @@
 - **THEN** 插件以 `thread/start` 建会话，随后发出 `thread/metadata/update`（参数含 `threadId` 与该 gitInfo）与 `thread/resume`
 - **AND** 子进程退出后，以 `vscode.openWith` 打开 `openai-codex://route/local/<id>`，viewType 为 `chatgpt.conversationEditor`，`preview` 为 `false`
 
-#### Scenario: 探测不到 gitInfo 时回退空白面板
+#### Scenario: 非 git 工作区仍然建会话并打开绑定标签
 
-- **GIVEN** 工作区不是 git 仓库（探测不到任何 gitInfo 字段）
+- **GIVEN** 工作区不是 git 仓库（探测不到任何真实 gitInfo 字段）
 - **WHEN** 用户触发「新建会话」
-- **THEN** 插件不发出任何 `thread/start` 请求
-- **AND** 以 `vscode.openWith` 打开 `/extension/panel/new`，query 为 `newPanel=<nonce>`
+- **THEN** 插件照常执行 `thread/start` → `thread/metadata/update` → `thread/resume`，其中 `gitInfo` 为 `{sha: '0000000000000000000000000000000000000000'}`（全零占位，保证 app-server 的「至少一个字段」与落盘都成立）
+- **AND** 以 `vscode.openWith` 打开 `openai-codex://route/local/<id>`，而不是空白面板
+
+#### Scenario: 建会话任一步失败时回退空白面板
+
+- **GIVEN** `thread/start` 或 `thread/resume` 返回错误
+- **WHEN** 用户触发「新建会话」
+- **THEN** 插件回退打开 `/extension/panel/new`（带新 nonce）
 
 #### Scenario: 建会话失败时回退空白面板且不报错
 
