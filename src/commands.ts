@@ -1,5 +1,9 @@
 import * as vscode from 'vscode';
-import { CODEX_CONVERSATION_VIEW_TYPE, buildNewPanelUri } from './codex/conversationUri';
+import {
+  CODEX_CONVERSATION_VIEW_TYPE,
+  buildConversationUri,
+  buildNewPanelUri,
+} from './codex/conversationUri';
 import type { UriApi } from './codex/types';
 
 /**
@@ -75,10 +79,17 @@ export function createRenameSessionCommand(
 }
 
 /**
- * 新建会话：本插件自己打开 Codex 的 new-panel 路由（`/extension/panel/new`），并在 query
- * 上带一个本次调用独有的 nonce。
+ * 新建会话分两步，优先「直接建会话」：
  *
- * 三条路都试过，结论写在这里，免得以后重走：
+ *  1. **建出会话再开绑定标签（首选）**：`thread/start` + `thread/metadata/update {gitInfo}`
+ *     + `thread/resume` 让 Codex 把 rollout 落盘，再用 `openai-codex://route/local/<id>`
+ *     打开标签。标签从出生就带会话 id ⇒ Codex 打开标签时会写标题（先首条消息，随后
+ *     用 `thread/list` 的名字覆盖），并且侧边栏点那一行会聚焦这个标签而不是再开一个。
+ *     细节和实测证据见 `src/session/sessionCreator.ts`。
+ *  2. **回退：空白面板**（`/extension/panel/new` 带一个本次调用独有的 nonce）。不是
+ *     git 仓库（探测不到 gitInfo）或建会话失败时走这里，行为与以前完全一致。
+ *
+ * 空白面板这条老路的历史结论留在这里，免得以后重走：
  *
  *  1. 委派 `chatgpt.newCodexPanel`（Codex 的「New Codex Agent」）：它的 resource 是常量
  *     `openai-codex://route/extension/panel/new`，而 Codex 注册自定义编辑器时声明
@@ -95,11 +106,10 @@ export function createRenameSessionCommand(
  * 于是只剩这条路：path 逐字保持 `/extension/panel/new`（webview 的路由才匹配得上），只让
  * resource 因 query 而不同，从而每次点击都开出独立面板。
  *
- * **已知后果**（上游的面板模型决定，改不掉，见 README「已知限制」）：面板的文档 resource
- * 永远停在这条路由上（webview 在面板里新建会话只做内部路由跳转），上游自己的
- * `trackTabIfNeeded` / `registerPendingConversation` 也只在已知 `conversationId` 时才登记，
- * 因此没有任何扩展知道「这个面板在看哪个会话」——面板标题停在常量 `Codex`，侧边栏里那条
- * 会话点开会另开一个绑定标签（那一个标题才是对的）。
+ * **空白面板的已知后果**（上游的面板模型决定，改不掉，见 README「已知限制」）：面板的
+ * 文档 resource 永远停在这条路由上（webview 在面板里新建会话只做内部路由跳转），因此没有
+ * 任何扩展知道「这个面板在看哪个会话」——面板标题停在常量 `Codex`，侧边栏里那条会话点开
+ * 会另开一个绑定标签。走回退路径时仍然是这个代价。
  *
  * 这里不刷新：`extension.ts` 已订阅 `onDidChangeTabs`，新标签出现会自动刷新树。
  * 失败只报错，绝不静默回退到别的入口。
@@ -109,10 +119,39 @@ export interface NewSessionCommandDeps {
   showErrorMessage(message: string): unknown;
   uriApi: UriApi;
   createNonce(): string;
+  /**
+   * 直接建出一个「面板能打开」的会话并返回它的 id；探测不到 gitInfo 或任一步失败时
+   * 返回 `null`（此时回退空白面板）。这个依赖是流程里唯一会失败的部分，失败不打扰用户。
+   */
+  createBoundSession(): Promise<string | null>;
 }
 
 export function createNewSessionCommand(deps: NewSessionCommandDeps): () => Promise<void> {
   return async function newSession(): Promise<void> {
+    // 1) 先试「直接建会话 → 开绑定标签」：标签从出生就绑定会话，标题由 Codex 自己写
+    let boundId: string | null = null;
+    try {
+      boundId = await deps.createBoundSession();
+    } catch {
+      // 建会话失败不该报错打断用户：能不能建出来是加分项，回退路径才是保底
+      boundId = null;
+    }
+    if (boundId) {
+      try {
+        await deps.executeCommand(
+          'vscode.openWith',
+          buildConversationUri(deps.uriApi, boundId),
+          CODEX_CONVERSATION_VIEW_TYPE,
+          { preview: false },
+        );
+        return;
+      } catch (error) {
+        deps.showErrorMessage(`打开新建的会话失败：${reasonOf(error)}`);
+        return;
+      }
+    }
+
+    // 2) 回退：空白面板（每次一个独立的 resource，才能多开）
     try {
       await deps.executeCommand(
         'vscode.openWith',

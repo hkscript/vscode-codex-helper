@@ -77,6 +77,12 @@ export interface OpenTab {
    * creating a second editor).
    */
   uri: UriLike;
+  /**
+   * 原始标签句柄（生产里就是 `vscode.Tab`）。重开一个标题过时的标签需要
+   * `vscode.window.tabGroups.close(handle)`，而只有它自己的句柄能关掉它。
+   * 快照没提供句柄时（老调用方 / 测试）为 `undefined`。
+   */
+  handle?: unknown;
 }
 
 /** One row rendered in the tree. */

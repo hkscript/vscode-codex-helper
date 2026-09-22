@@ -1,15 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { activate } from '../../src/extension';
+import type { UriLike } from '../../src/codex/types';
 import { PIN_STATE_KEY } from '../../src/session/pinStore';
-import { createFakeMemento, createFakeUriApi, pushMessage, type FakeChildProcess } from '../helpers/fakes';
+import {
+  createFakeChildProcess,
+  createFakeMemento,
+  createFakeUriApi,
+  makeThread,
+  pushMessage,
+  type FakeChildProcess,
+} from '../helpers/fakes';
 
 // app-server 子进程必须被替换：真实 spawn 会拉起 Codex 自带的二进制。这个假进程
 // 由测试逐条回包（先 initialize 握手，再业务方法），形状与 appServerClient.test.ts 一致。
+// 每次 spawn 都给一个新假进程：「新建会话」会额外起一个一次性 app-server。
+const spawnedChildren = vi.hoisted(() => ({ list: [] as FakeChildProcess[] }));
 vi.mock('node:child_process', async () => {
   const { createFakeChildProcess } = await import('../helpers/fakes');
-  const child = createFakeChildProcess();
-  return { spawn: () => child, __child: () => child };
+  return {
+    spawn: () => {
+      const child = createFakeChildProcess(4000 + spawnedChildren.list.length);
+      spawnedChildren.list.push(child);
+      return child;
+    },
+    __child: () => spawnedChildren.list[0],
+    __children: () => spawnedChildren.list,
+  };
 });
 
 // 归档/取消归档/删除的预检用的是同一份 /proc 归属扫描。测试里换成可控结果，
@@ -62,8 +79,38 @@ function activatedHandler(command: string): (node?: unknown) => Promise<unknown>
 }
 
 async function appServerChild(): Promise<FakeChildProcess> {
-  const mocked = (await import('node:child_process')) as unknown as { __child(): FakeChildProcess };
-  return mocked.__child();
+  const mocked = (await import('node:child_process')) as unknown as {
+    __children(): FakeChildProcess[];
+  };
+  const children = mocked.__children();
+  // 取最后一个「还有没兑现的请求」的进程：共享 client 的握手失败后会重开进程，
+  // 「新建会话」也会另起一个一次性进程，等待回包的那个才是当前真正在说话的。
+  const waiting = children.filter((child) => child.written.length > 0);
+  // 单独跑用例时可能还没人 spawn 过：兜底造一个（不登记进列表，免得被后续用例捡到）
+  return waiting[waiting.length - 1] ?? children[children.length - 1] ?? createFakeChildProcess(9999);
+}
+
+async function appServerChildren(): Promise<FakeChildProcess[]> {
+  const mocked = (await import('node:child_process')) as unknown as {
+    __children(): FakeChildProcess[];
+  };
+  return mocked.__children();
+}
+
+/** 兑现某个假进程当前缓冲区里的每一条请求（按 method 给结果）。 */
+async function answerChildRound(
+  child: FakeChildProcess,
+  results: Record<string, unknown> = {},
+): Promise<Array<{ id: number; method: string; params?: unknown }>> {
+  const requests: Array<{ id: number; method: string; params?: unknown }> = [];
+  for (const line of child.written.splice(0)) {
+    const request = JSON.parse(line) as { id: number; method: string; params?: unknown };
+    requests.push(request);
+    const result = request.method === 'initialize' ? { userAgent: 'codex/test' } : results[request.method] ?? {};
+    pushMessage(child, { jsonrpc: '2.0', id: request.id, result });
+  }
+  await flush();
+  return requests;
 }
 
 /** 把假进程收到的请求逐条兑现：initialize 回握手，其余按 outcome 回成功或失败。 */
@@ -99,9 +146,9 @@ async function runHandler(
 }
 
 /** 构造一个 Codex 会话标签（input 是 fakes 里的 TabInputCustom）。 */
-function makeTab(conversationId: string) {
+function makeTab(conversationId: string, label = `会话 ${conversationId}`) {
   return {
-    label: `会话 ${conversationId}`,
+    label,
     input: new vscode.TabInputCustom(
       // 运行期是 fakes 的 TabInputCustom（吃 UriLike）；类型来自 @types/vscode（吃 Uri）
       uriApi
@@ -110,6 +157,64 @@ function makeTab(conversationId: string) {
       'chatgpt.conversationEditor',
     ),
   };
+}
+
+/** 抓到树数据提供者，好让用例自己触发一次 load（标题同步挂在 load 上）。 */
+function captureTreeProvider(): { getChildren(node?: unknown): Promise<unknown> } {
+  let captured: { getChildren(node?: unknown): Promise<unknown> } | undefined;
+  (
+    vscode.window.createTreeView as unknown as { mockImplementation(fn: unknown): void }
+  ).mockImplementation(
+    (_id: string, options: { treeDataProvider: { getChildren(node?: unknown): Promise<unknown> } }) => {
+      captured = options.treeDataProvider;
+      return { dispose: vi.fn() };
+    },
+  );
+  activate(makeContext() as never);
+  if (!captured) throw new Error('没有拿到树数据提供者');
+  return captured;
+}
+
+/** 让假 app-server 满足一次完整 load：握手 + 两批 thread/list。 */
+async function answerListRequests(threads: unknown[], archived: unknown[] = []): Promise<void> {
+  const child = await appServerChild();
+  const round = async (): Promise<void> => {
+    for (const line of child.written.splice(0)) {
+      const request = JSON.parse(line) as { id: number; method: string; params?: { archived?: boolean } };
+      const result =
+        request.method === 'initialize'
+          ? { userAgent: 'codex/test' }
+          : request.method === 'thread/list'
+            ? { data: request.params?.archived ? archived : threads, nextCursor: null }
+            : {};
+      pushMessage(child, { jsonrpc: '2.0', id: request.id, result });
+    }
+    await flush();
+  };
+  await round();
+  await round();
+}
+
+/** 让 `vscode.git` 扩展 API 返回一个带分支/远端的仓库。 */
+function answerGitInfo(): void {
+  (
+    vscode.extensions.getExtension as unknown as { mockImplementation(fn: unknown): void }
+  ).mockImplementation((id: string) =>
+    id === 'vscode.git'
+      ? {
+          activate: async () => ({
+            getAPI: () => ({
+              getRepository: () => ({
+                state: {
+                  HEAD: { name: 'main', commit: 'abc123' },
+                  remotes: [{ fetchUrl: 'git@example.com:o/r.git' }],
+                },
+              }),
+            }),
+          }),
+        }
+      : undefined,
+  );
 }
 
 /** 让这一次 `showInputBox` 调用返回给定名字（once 语义，不泄漏到别的用例）。 */
@@ -124,6 +229,9 @@ describe('extension', () => {
     vi.clearAllMocks();
     refreshes = 0;
     heldRollouts.current = new Map();
+    // 共享的 app-server client 是模块级单例，跨用例复用；这里只重置外部状态
+    (vscode.workspace as { workspaceFolders?: unknown }).workspaceFolders = undefined;
+    (vscode.window.tabGroups as { activeTabGroup: unknown }).activeTabGroup = { activeTab: undefined };
     // 让 `resolveCodexBinary` 直接返回配置值（否则它会因为「没有装 Codex 扩展」而抛错，
     // 命令根本走不到 app-server 调用）。
     (
@@ -282,5 +390,77 @@ describe('extension', () => {
     expect(checked).toBe(6);
     // 反空转护栏：6 格里真的出现过「关标签」的那一格
     expect(successCloseRuns).toBe(1);
+  });
+
+  // REQ: 新建会话 / Scenario: 建会话成功后打开绑定标签
+  it('new_session_command_creates_bound_session_with_one_shot_process', async () => {
+    interceptTreeView();
+    activate(makeContext() as never);
+    answerGitInfo();
+    (vscode.workspace as { workspaceFolders?: unknown }).workspaceFolders = [
+      { uri: { ...uriApi.file('/repo'), fsPath: '/repo' } },
+    ];
+
+    const before = (await appServerChildren()).length;
+    const pending = activatedHandler('codexHelper.newSession')();
+    await flush();
+
+    const children = await appServerChildren();
+    // 恰好新起一个进程：共享的那个 app-server 不能被用来落盘（它会一直持有 writer 锁）
+    expect(children.length - before).toBe(1);
+    const oneShot = children[before]!;
+    const requests = [
+      ...(await answerChildRound(oneShot)),
+      // 每次回包之后才写下一个请求：一轮一个
+      ...(await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-1' } } })),
+      ...(await answerChildRound(oneShot, { 'thread/metadata/update': {} })),
+      ...(await answerChildRound(oneShot, { 'thread/resume': {} })),
+    ];
+    await pending;
+
+    // 建会话的调用序列就是本机 probe 出来的那条（少了 metadata/update 面板打不开）
+    expect(requests.map((request) => request.method)).toEqual([
+      'initialize',
+      'thread/start',
+      'thread/metadata/update',
+      'thread/resume',
+    ]);
+    expect(requests[1]!.params).toEqual({ cwd: '/repo' });
+    expect(requests[2]!.params).toEqual({
+      threadId: 'tid-1',
+      gitInfo: { branch: 'main', sha: 'abc123', originUrl: 'git@example.com:o/r.git' },
+    });
+    // 一次性进程必须死掉：它活着就持有 writer 锁，Codex 面板 resume 会被拒
+    expect(oneShot.killed).toBe(true);
+
+    const [command, uri] = (
+      vscode.commands.executeCommand as unknown as { mock: { calls: Array<[string, UriLike]> } }
+    ).mock.calls[0]!;
+    expect(command).toBe('vscode.openWith');
+    expect(uri.path).toBe('/local/tid-1');
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  // REQ: 未标题标签的标题同步 / Scenario: 未标题标签被同步成会话标题（接线层）
+  it('title_sync_reopens_untitled_tab_of_an_idle_session', async () => {
+    const provider = captureTreeProvider();
+    const tab = makeTab('t1', 'Codex');
+    (vscode.window.tabGroups.all as unknown[]) = [{ tabs: [tab] }];
+
+    const loading = provider.getChildren();
+    await flush();
+    await answerListRequests([makeThread({ id: 't1', name: '修复登录超时' })]);
+    await loading;
+    await flush();
+
+    // 关掉标题还停在 Codex 的标签，再用它**自己的 resource** 重开 —— 这是让 Codex
+    // 重新 resolve 并自己写标题的唯一手段
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledTimes(1);
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledWith(tab, true);
+    const openCall = (
+      vscode.commands.executeCommand as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls.find((call) => call[0] === 'vscode.openWith')!;
+    expect((openCall[1] as UriLike).path).toBe('/local/t1');
+    expect(openCall[3]).toEqual({ preview: false });
   });
 });

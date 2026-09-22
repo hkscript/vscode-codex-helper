@@ -119,4 +119,25 @@ describe('openTabs', () => {
     // 没开着的会话 ⇒ 一个都不关
     expect(selectTabsForConversation(tabGroups, 'conv-9')).toEqual([]);
   });
+
+  // REQ: 未标题标签的标题同步 / Scenario: 未标题标签被同步成会话标题
+  it('keeps_tab_handle_for_closing', () => {
+    const handle = { id: 'tab-untitled' };
+    const tabGroups = {
+      all: [
+        {
+          tabs: [
+            { label: 'Codex', input: conversationInput('conv-1'), handle },
+            // 快照没给句柄（旧调用方）时不能凭空造一个
+            { label: 'Codex', input: conversationInput('conv-2') },
+          ],
+        },
+      ],
+    };
+
+    const scanned = scanCodexTabs(tabGroups);
+
+    // 重开一个标签需要它自己的句柄：关闭动作只能靠 vscode.window.tabGroups.close(handle)
+    expect(scanned.map((tab) => tab.handle)).toEqual([handle, undefined]);
+  });
 });

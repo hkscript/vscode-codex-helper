@@ -55,7 +55,7 @@ export function scanCodexTabs(
       // row that opened a nonexistent conversation when clicked.
       const id = parseConversationId(input.uri);
       if (!id) continue;
-      open.push({ id, tabLabel: tab.label, uri: input.uri });
+      open.push({ id, tabLabel: tab.label, uri: input.uri, handle: tab.handle });
     }
   }
   return open;

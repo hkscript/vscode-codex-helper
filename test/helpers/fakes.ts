@@ -254,6 +254,7 @@ export const window = {
   registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
   tabGroups: {
     all: [] as unknown[],
+    activeTabGroup: { activeTab: undefined } as { activeTab: unknown },
     onDidChangeTabs: vi.fn(() => ({ dispose: vi.fn() })),
     close: vi.fn(async () => true),
   },

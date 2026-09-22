@@ -33,18 +33,28 @@ function makeNewSessionDeps() {
   const showErrorMessage = vi.fn((_message: string) => undefined);
   const nonces = ['n1', 'n2'];
   const createNonce = vi.fn(() => nonces.shift() ?? 'nX');
+  // 默认「建不了会话」（不是 git 仓库）：走空白面板兜底那条路，
+  // 这条默认值也让下面三条老用例原样成立。
+  const createBoundSession = vi.fn(async () => null as string | null);
   return {
-    deps: { executeCommand, showErrorMessage, uriApi: createFakeUriApi(), createNonce },
+    deps: { executeCommand, showErrorMessage, uriApi: createFakeUriApi(), createNonce, createBoundSession },
     calls,
     executeCommand,
     showErrorMessage,
     createNonce,
+    createBoundSession,
   };
 }
 
 /** VS Code 的 resource 身份：scheme/authority/path/query 全同才算同一个文档。 */
 function resourceKey(uri: UriLike): string {
   return `${uri.scheme}://${uri.authority}${uri.path}?${uri.query}`;
+}
+
+/** 最后一次 `vscode.openWith` 的 [命令, resource 身份]。 */
+function executeOf(calls: unknown[][]): [string, string] {
+  const call = calls[calls.length - 1] as [string, UriLike];
+  return [call[0], resourceKey(call[1])];
 }
 
 describe('commands', () => {
@@ -183,6 +193,53 @@ describe('commands', () => {
 
     expect(showErrorMessage).toHaveBeenCalledTimes(1);
     expect(String(showErrorMessage.mock.calls[0]![0])).toContain('no custom editor registered');
+  });
+
+  // REQ: 新建会话 / Scenario: 建会话成功后打开绑定标签
+  it('new_session_opens_bound_tab_when_creation_succeeds', async () => {
+    const { deps, calls, createBoundSession, createNonce, showErrorMessage } = makeNewSessionDeps();
+    createBoundSession.mockResolvedValue('01a0becc-10ff-7a00-8574-923d5b93bae0');
+    const newSession = createNewSessionCommand(deps);
+
+    await newSession();
+
+    // 建出会话就不再开空白面板：标签从出生就带会话 id，标题由 Codex 自己写
+    expect(executeOf(calls)).toEqual([
+      'vscode.openWith',
+      'openai-codex://route/local/01a0becc-10ff-7a00-8574-923d5b93bae0?',
+    ]);
+    expect(createNonce).not.toHaveBeenCalled();
+    expect(showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  // REQ: 新建会话 / Scenario: 探测不到 gitInfo 时回退空白面板
+  it('new_session_falls_back_to_blank_panel_without_git_info', async () => {
+    const { deps, calls, createBoundSession } = makeNewSessionDeps();
+    createBoundSession.mockResolvedValue(null);
+    const newSession = createNewSessionCommand(deps);
+
+    await newSession();
+
+    expect(executeOf(calls)).toEqual([
+      'vscode.openWith',
+      'openai-codex://route/extension/panel/new?newPanel=n1',
+    ]);
+  });
+
+  // REQ: 新建会话 / Scenario: 建会话失败时回退空白面板且不报错
+  it('new_session_falls_back_to_blank_panel_when_creation_throws', async () => {
+    const { deps, calls, createBoundSession, showErrorMessage } = makeNewSessionDeps();
+    createBoundSession.mockRejectedValue(new Error('app-server exploded'));
+    const newSession = createNewSessionCommand(deps);
+
+    await expect(newSession()).resolves.toBeUndefined();
+
+    // 建会话是我们自己加的前置动作，它失败不该打扰用户：静默走回空白面板
+    expect(executeOf(calls)).toEqual([
+      'vscode.openWith',
+      'openai-codex://route/extension/panel/new?newPanel=n1',
+    ]);
+    expect(showErrorMessage).not.toHaveBeenCalled();
   });
 
   // REQ: 会话归档与删除 / Scenario: 归档不弹确认直接执行（命令层）

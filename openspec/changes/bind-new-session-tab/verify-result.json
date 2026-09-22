@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "change": "bind-new-session-tab",
+  "head": "4ba89fe812947e52aa67bb88c173a6aba6a0d26a",
+  "fingerprint": "sha256:427bf226c0e715a5b07012e29ec9a45dca1a09fd1e6148b87307631ce96465eb",
+  "testRuns": [
+    {
+      "name": "full-suite",
+      "exitCode": 0,
+      "tests": 170,
+      "files": 21
+    },
+    {
+      "name": "typecheck",
+      "exitCode": 0
+    },
+    {
+      "name": "real-app-server-flow",
+      "exitCode": 0,
+      "note": "隔离 CODEX_HOME：createBoundSession 落盘 + 跨进程 resume + 空会话不进列表"
+    }
+  ],
+  "scenarioCoverage": {
+    "mapped": 20,
+    "total": 20
+  },
+  "designConsistency": {
+    "pass": true,
+    "blockers": [],
+    "notes": [
+      "落盘触发器由 name/set 改为 metadata/update(gitInfo)：已回写 proposal/design 的 [Verified] 表",
+      "waitForChildExit 必须先挂监听再 kill：已修，并由 T-119 的耗时变化暴露"
+    ]
+  },
+  "userConfirmation": {
+    "received": true
+  }
+}

@@ -4,11 +4,17 @@ import { readFileSync, readdirSync, readlinkSync, watch } from 'node:fs';
 import { access, copyFile, readFile, writeFile } from 'node:fs/promises';
 import { Script } from 'node:vm';
 import * as vscode from 'vscode';
-import { CLIENT_NAME, createAppServerClient, type AppServerClient } from './codex/appServerClient';
+import {
+  CLIENT_NAME,
+  createAppServerClient,
+  type AppServerClient,
+  type ChildProcessLike,
+} from './codex/appServerClient';
 import { CODEX_EXTENSION_ID, resolveCodexBinary } from './codex/binary';
+import { CODEX_CONVERSATION_VIEW_TYPE } from './codex/conversationUri';
 import { createNoRetryPatcher, createPatchOnOpen } from './codex/noRetryPatch';
 import { createThreadApi } from './codex/threadApi';
-import type { SessionGroup, Thread } from './codex/types';
+import type { SessionGroup, Thread, UriLike } from './codex/types';
 import {
   createArchiveSessionCommand,
   createDeleteSessionCommand,
@@ -24,12 +30,27 @@ import { createPinStore } from './session/pinStore';
 import { scanHeldRollouts } from './session/processScan';
 import { createRunningTracker, type RunningTracker } from './session/runningTracker';
 import { buildSessionGroups } from './session/sessionStore';
+import { createBoundSession, waitForChildExit, type ExitableChild, type GitInfo } from './session/sessionCreator';
+import { planTabTitleSync, resourceKey } from './session/tabTitleSync';
 import { createWriterLockProbe } from './session/writerLock';
 import { createSessionTreeProvider } from './ui/treeProvider';
 
 let appServer: AppServerClient | undefined;
 let autoRefresh: ReturnType<typeof setInterval> | undefined;
 let runningTracker: RunningTracker | undefined;
+
+/** `vscode.git` 的导出形状（只用到仓库 HEAD 与远端地址两处）。 */
+interface GitRepositoryLike {
+  state?: {
+    HEAD?: { name?: string | null; commit?: string | null } | null;
+    remotes?: Array<{ fetchUrl?: string | null; pushUrl?: string | null }>;
+  };
+}
+
+interface GitApiLike {
+  getRepository?(uri: unknown): GitRepositoryLike | undefined;
+  repositories?: GitRepositoryLike[];
+}
 
 /** Menu contributions hand us the tree node; `TreeItem.command` hands us a payload. Accept both. */
 function sessionIdOf(node: unknown): string | undefined {
@@ -52,18 +73,21 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const configuration = () => vscode.workspace.getConfiguration('codexHelper');
 
+  function binaryPath(): string {
+    return resolveCodexBinary({
+      getConfiguration: (section: string) => vscode.workspace.getConfiguration(section),
+      getExtension: (id: string) => {
+        const extension = vscode.extensions.getExtension(id);
+        return extension ? { extensionPath: extension.extensionPath } : undefined;
+      },
+    });
+  }
+
   /** Lazy: the 250 MB binary is only spawned when data is actually needed (D3). */
   function client(): AppServerClient {
     if (!appServer) {
-      const binaryPath = resolveCodexBinary({
-        getConfiguration: (section: string) => vscode.workspace.getConfiguration(section),
-        getExtension: (id: string) => {
-          const extension = vscode.extensions.getExtension(id);
-          return extension ? { extensionPath: extension.extensionPath } : undefined;
-        },
-      });
       appServer = createAppServerClient({
-        binaryPath,
+        binaryPath: binaryPath(),
         spawn: ((command: string, args: string[], options: object) =>
           spawn(command, args, options)) as never,
         // 版本唯一来源是 package.json：发版只改那一个文件
@@ -75,6 +99,76 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     }
     return appServer;
+  }
+
+  /**
+   * 工作区第一个 folder 的真实 git 信息；探测不到（不是 git 仓库 / 没有 git 扩展）时
+   * 返回 `null`，调用方据此放弃「直接建会话」并回退空白面板。
+   *
+   * `thread/metadata/update` 要求至少一个字段，而它是唯一**非破坏性**的落盘触发器：
+   * `thread/name/set` 也能让 resume 成功，但会把会话名固定住、顶掉 Codex 的自动标题。
+   */
+  async function gitInfoForWorkspace(): Promise<GitInfo | null> {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) return null;
+    const gitExtension = vscode.extensions.getExtension('vscode.git');
+    if (!gitExtension) return null;
+    try {
+      const exported = (await gitExtension.activate()) as { getAPI?(version: number): unknown };
+      const api = exported?.getAPI?.(1) as GitApiLike | undefined;
+      const repository = api?.getRepository?.(folder.uri) ?? api?.repositories?.[0];
+      const head = repository?.state?.HEAD;
+      const remote = repository?.state?.remotes?.[0];
+      const info: GitInfo = {};
+      if (head?.name) info.branch = head.name;
+      if (head?.commit) info.sha = head.commit;
+      const originUrl = remote?.fetchUrl ?? remote?.pushUrl;
+      if (originUrl) info.originUrl = originUrl;
+      return Object.keys(info).length > 0 ? info : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 起一个**一次性** app-server 子进程建会话，然后等它退出。
+   *
+   * 为什么不能复用共享的那个 app-server：`thread/resume` 会持有该会话的 writer 锁，
+   * 只要持有者进程活着，Codex 面板（另一个进程）的 resume 就会被拒
+   * `already has an active writer`（`thread/unsubscribe` 实测也放不掉）。所以落盘这件事
+   * 必须由一个马上退出的进程来做，锁随进程消失。
+   */
+  async function createBoundSessionInOneShot(): Promise<string | null> {
+    const gitInfo = await gitInfoForWorkspace();
+    if (!gitInfo) return null;
+
+    let spawned: ChildProcessLike | undefined;
+    const oneShot = createAppServerClient({
+      binaryPath: binaryPath(),
+      spawn: ((command: string, args: string[], options: object) => {
+        const child = spawn(command, args, options);
+        spawned = child as never;
+        return child as never;
+      }) as never,
+      clientInfo: {
+        name: CLIENT_NAME,
+        version: String(context.extension.packageJSON.version),
+      },
+      onStderrLine: (line: string) => console.log(`[codex app-server:new-session] ${line}`),
+    });
+
+    try {
+      return await createBoundSession(oneShot, {
+        cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,
+        gitInfo,
+      });
+    } finally {
+      // 打开标签之前必须等它真的退出：锁没放开时 Codex 面板的 resume 会被拒。
+      // 先挂退出监听再 kill —— 反过来的话，进程可能在监听装上之前就退出，白等一个超时。
+      const exited = waitForChildExit(spawned as ExitableChild | undefined);
+      oneShot.dispose();
+      await exited;
+    }
   }
 
   function api() {
@@ -92,7 +186,8 @@ export function activate(context: vscode.ExtensionContext): void {
     return scanCodexTabs(
       {
         all: vscode.window.tabGroups.all.map((group) => ({
-          tabs: group.tabs.map((tab) => ({ label: tab.label, input: tab.input })),
+          // 句柄一起带出去：重开一个标题过时的标签得先把它关掉，而关它只能靠它自己的句柄
+          tabs: group.tabs.map((tab) => ({ label: tab.label, input: tab.input, handle: tab })),
         })),
       },
       { isCustomInput: (input: unknown) => input instanceof vscode.TabInputCustom },
@@ -114,6 +209,66 @@ export function activate(context: vscode.ExtensionContext): void {
 
   let tracker: RunningTracker | undefined;
 
+  /**
+   * 标题同步：把「标题还停在 Codex 默认值、但它绑定的会话已经有标题」的标签关掉重开一次。
+   *
+   * 为什么只能这么修：Codex 只在 `resolveCustomEditor` 那一刻写标题（先取
+   * `summary.preview`，随后用 `thread/list` 的 `name?.trim() || preview` 覆盖，超过 30 字符
+   * 截断），而 VS Code 不允许外部改别的扩展的标签标题。因此「让标题变对」= 让 Codex
+   * 重新 resolve 一次。只在会话空闲、且那个标签不是当前激活标签时动手，避免重载用户
+   * 正在看的对话。
+   */
+  const syncedTitles = new Map<string, string>();
+  let syncingTitles = false;
+
+  /** 当前激活标签的 resource 身份（不是 Codex 标签时也返回它的 key，比不中就不会跳过）。 */
+  function activeTabResourceKey(): string | null {
+    const input = vscode.window.tabGroups.activeTabGroup?.activeTab?.input as
+      | { uri?: UriLike }
+      | undefined;
+    const uri = input && typeof input === 'object' ? input.uri : undefined;
+    return uri && typeof uri.path === 'string' ? resourceKey(uri) : null;
+  }
+
+  async function syncTabTitles(): Promise<void> {
+    if (syncingTitles) return;
+    const tabs = openTabs();
+    // 标签没了，那条「同步过」的记录也就没用了
+    const liveIds = new Set(tabs.map((tab) => tab.id));
+    for (const id of [...syncedTitles.keys()]) if (!liveIds.has(id)) syncedTitles.delete(id);
+
+    const plan = planTabTitleSync({
+      tabs,
+      threads,
+      runningIds: tracker?.snapshot() ?? null,
+      activeTabKey: activeTabResourceKey(),
+      synced: syncedTitles,
+    });
+    if (plan.length === 0) return;
+
+    syncingTitles = true;
+    try {
+      for (const entry of plan) {
+        // 先记账再动手：重开本身会触发一轮刷新，没有这条记录就会来回抖
+        syncedTitles.set(entry.sessionId, entry.expectedTitle);
+        try {
+          await vscode.window.tabGroups.close(entry.tab.handle as never, true);
+          await vscode.commands.executeCommand(
+            'vscode.openWith',
+            entry.tab.uri,
+            CODEX_CONVERSATION_VIEW_TYPE,
+            { preview: false },
+          );
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(`同步会话标签标题失败：${reason}`);
+        }
+      }
+    } finally {
+      syncingTitles = false;
+    }
+  }
+
   async function load(): Promise<SessionGroup[]> {
     // 两批会话并行拉：未归档（置顶/最近/历史）与已归档（「已归档」分组 —— 它同时是
     // 删除入口与撤销归档的地方）。两次请求共用同一个 app-server 握手（start 是幂等的）。
@@ -134,7 +289,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // 喂最新的线程列表。tracker 只在运行集合真的变化时才回调（D23），
     // 所以这条 refresh → load → update → refresh 的回环一轮就收敛。
     tracker?.update(threads);
-    return buildSessionGroups({
+    const groups = buildSessionGroups({
       threads,
       archivedThreads: archivedPage.data,
       openTabs: openTabs(),
@@ -142,6 +297,9 @@ export function activate(context: vscode.ExtensionContext): void {
       runningIds: tracker?.snapshot() ?? null,
       filter,
     });
+    // 树先拿到新数据，标题同步随后跑；关标签会再触发一轮刷新（syncedTitles 防抖）
+    void syncTabTitles();
+    return groups;
   }
 
   const provider = createSessionTreeProvider({ load });
@@ -262,6 +420,8 @@ export function activate(context: vscode.ExtensionContext): void {
     // nonce 让每次点击落到不同的 resource —— 同一 resource 在 Codex 那边只会聚焦已有标签
     uriApi: vscode.Uri,
     createNonce: () => randomUUID(),
+    // 首选：直接建出一个能被面板打开的会话（标签从出生就绑定会话）
+    createBoundSession: createBoundSessionInOneShot,
   });
 
   /**

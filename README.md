@@ -66,9 +66,11 @@ Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切�
 
 ## 工作原理
 
-- **数据源**：以 stdio 启动 `codex app-server`，走 NDJSON JSON-RPC，使用 `thread/list`（按 `archived` 分别拉未归档与已归档两批）、`thread/loaded/list`、`thread/name/set`、`thread/turns/list`、`thread/archive`、`thread/unarchive`、`thread/delete` 七个方法。
+- **数据源**：以 stdio 启动 `codex app-server`，走 NDJSON JSON-RPC。列表与状态用 `thread/list`（按 `archived` 分别拉未归档与已归档两批）、`thread/loaded/list`、`thread/turns/list`；改名与归档三件套用 `thread/name/set`、`thread/archive`、`thread/unarchive`、`thread/delete`；新建会话用 `thread/start` + `thread/metadata/update` + `thread/resume`（见下一条）。
 - **打开会话**：构造 Codex 内部的会话 URI（`openai-codex://route/local/<id>`），用 `vscode.openWith` 交给 `chatgpt.conversationEditor`。已经开着标签的条目改用**那个标签自己的 resource**（含它的 query / remote 前缀）去打开——Codex 的自定义编辑器不允许同一文档开多个编辑器，所以这是「聚焦已有标签」而不是新建；「已归档」的条目先调一次 `thread/unarchive`（对齐 Codex 面板里的「取消归档并打开」），失败只报错、仍然打开。
-- **新建会话**：同样走 `vscode.openWith`，打开 Codex 的 new-panel 路由 `/extension/panel/new`，但每次额外带一个 `?newPanel=<随机值>` 的 query。Codex 自己的 `chatgpt.newCodexPanel` 用的是固定 resource，在「同一文档只允许一个编辑器」的限制下连点只会聚焦同一个标签；换个 query 等于换个 resource，才能真正多开。
+- **新建会话（首选：直接建会话 + 开绑定标签）**：起一个**一次性** `codex app-server` 子进程，依次执行 `thread/start` → `thread/metadata/update`（写入工作区真实的 gitInfo）→ `thread/resume`。最后这步会让 Codex 自己把 rollout 头落盘，随后用 `openai-codex://route/local/<id>` 打开标签 —— 标签从出生就绑定会话：标题由 Codex 自己写，侧边栏点那一行会**聚焦这个标签**而不是再开一个。子进程必须**退出后**才打开标签：`thread/resume` 会持有该会话的 writer 锁，锁没放开时 Codex 面板的 resume 会被拒 `already has an active writer`（`thread/unsubscribe` 放不掉，只有进程退出才行）。
+- **新建会话（回退：空白面板）**：工作区不是 git 仓库（探测不到 `gitInfo`）或建会话失败时，回退成打开 Codex 的 new-panel 路由 `/extension/panel/new`，每次额外带一个 `?newPanel=<随机值>` 的 query。Codex 自己的 `chatgpt.newCodexPanel` 用的是固定 resource，在「同一文档只允许一个编辑器」的限制下连点只会聚焦同一个标签；换个 query 等于换个 resource，才能真正多开。
+- **标签标题同步**：Codex 只在**打开标签那一刻**写标题（先取首条消息，随后用 `thread/list` 的名字覆盖，超过 30 字截断加 `…`），VS Code 又不允许外部改别的扩展的标签标题。所以标题还停在常量 `Codex`、而它绑定的会话已经有名字/首条消息时，本插件会在**该会话没在跑、且那个标签不是当前激活标签**时把标签关掉、用**它自己的 resource** 重开一次，让 Codex 重新 resolve 并自己把标题写上（见「已知限制」里的代价）。
 - **标签只作为标记**：扫描 `window.tabGroups`，识别 view type 为 `chatgpt.conversationEditor` 的标签页并解析出会话 id。标签**不再产生独立的行**——它只给对应会话行打「已打开」标记（窗口图标）并带上该标签自己的 resource。还没绑定会话的新面板解析不出会话 id，直接跳过（因此空白面板不进侧边栏，点 `+` 后请到编辑器标签栏找它）。
 - **归档与删除**：归档 = `thread/archive`，取消归档 = `thread/unarchive`，删除 = `thread/delete`（不可恢复）。归档只是个标记，不动标签页；删除成功后本扩展会关掉显示该会话的标签页——本扩展与 Codex 各跑一个 app-server 子进程，删除通知不会跨进程送达 Codex 那侧的 webview，留着标签会让它继续去读一个已删除的会话。
 - **二进制解析**：`codexHelper.codexExecutable` → `chatgpt.cliExecutable` → `<codex 扩展>/bin/<os>-<arch>/codex`，与 Codex 扩展自身的解析顺序保持一致。
@@ -82,13 +84,13 @@ Codex 官方扩展（`openai.chatgpt`）把历史会话藏在面板内部，切�
 - 「已归档」分组只加载一页（`codexHelper.pageSize`，默认 50 条），不参与「加载更多」；归档数量很大时该组显示不全。
 - 删除（`thread/delete`）不可恢复，且不弹确认框：删除入口只出现在「已归档」分组里，要误删得先归档再展开该组。归档可用 `thread/unarchive`（右键「取消归档」，或直接点开该条目）恢复。
 - 归档 / 取消归档 / 删除需要**独占**这个会话：只要 Codex 那侧的 app-server 还持有它（打开过它、或它正在跑），本插件（另一个 app-server 进程）就会拿到 `already has an active writer`。抢不到也放不掉——`thread/resume` 会被同样拒绝，`thread/unsubscribe` 由非持有者发只影响自己的订阅，**关掉标签页也不释放**（持有者是 Codex 的 app-server 进程，不是那个标签，实测关掉很久仍失败）。所以这三个动作**点击时先预检**：用运行状态判定那份 `/proc` 归属扫描看一眼是不是被别的 codex 进程持有，命中就直接说明、不发那个注定被拒的请求（请求真被拒时给同一句说明兜底）。出路是用 Codex 自己的入口，或者 Reload Window 让 Codex 的 app-server 退出之后再归档。重命名不受影响（`thread/name/set` 不需要独占）。
-- 侧边栏无法知道「某个空白面板正在显示哪个会话」：Codex 的 webview 在面板内新建会话时只做内部路由跳转，不改标签的 resource（上游自己的 chat session provider 也拿不到这个映射）。所以面板里开始的会话在侧边栏表现为「最近」/「历史」里的一行，而不是与那个面板绑定的一行。
+- **回退路径**（不是 git 仓库、或建会话失败）下，侧边栏无法知道「那个空白面板正在显示哪个会话」：Codex 的 webview 在面板内新建会话时只做内部路由跳转，不改标签的 resource（上游自己的 chat session provider 也拿不到这个映射）。所以回退面板里开始的会话在侧边栏表现为「最近」/「历史」里的一行，而不是与那个面板绑定的一行；它的标签标题也会一直停在 `Codex`（同步逻辑只处理能解析出会话 id 的标签）。
 - 打开会话失败时只报错，不会退回「新建空会话」——那样看起来像成功，实际会丢掉用户的对话。
-- 「新建会话」复刻了 Codex 的 new-panel 路由与 `newPanel` query（见「工作原理」）。如果 Codex 升级后改了这条路由、或不再容忍 query，症状是 `+` 开出一个空白/异常页面；此时应改回委派 `chatgpt.newCodexPanel`（代价是只能开一个）。
-- 「新建会话」为什么不自己开一个「已经绑定会话」的标签：`thread/start` 建出的会话在首条消息之前**没有 rollout 文件**（返回的 path 只是预计路径），而 Codex 面板 hydrate 时会 `thread/resume`，实测直接报 `no rollout found for thread id <id>`，面板显示 `Failed to resume chat`。委派 `chatgpt.newChat`（Codex 侧边栏新建）虽然能避开这一切，但不产生标签页，用户也不要这个入口。所以 `+` 保持空白面板：能多开、能用，代价就是上一条那个「面板与列表对不上」。
+- 「新建会话」的首选路径会多起一个一次性的 `codex app-server` 子进程（实测约 1 秒），并且依赖一条实测出来的调用顺序：`thread/start` 之后必须有一次成功的状态写入（我们写真实 gitInfo）`thread/resume` 才会成功，也才会把 rollout 落盘；少了它 resume 直接报 `no rollout found`。Codex 升级若改了这套行为，`+` 会自动回退成空白面板（不报错），修复点是重新确认这条序列。另一个细节：**不能**用 `thread/name/set` 当落盘触发器——它会把会话名固定住，顶掉 Codex 的自动标题。
+- 标签标题同步是「关掉重开」：命中时会重载一次面板，**未发送的草稿和滚动位置会丢**（会话内容不丢）。所以它只在会话空闲、且那个标签不是当前激活标签时动手；运行状态判定不可用时（`codexHelper.showRunningIndicator` 关掉）不自动同步。会话改名导致的旧标签标题漂移也不会被同步——只有标题还是 `Codex` 的标签会被处理。
+- 回退路径复刻了 Codex 的 new-panel 路由与 `newPanel` query（见「工作原理」）。如果 Codex 升级后改了这条路由、或不再容忍 query，症状是回退时 `+` 开出一个空白/异常页面；此时应改回委派 `chatgpt.newCodexPanel`（代价是只能开一个）。
 - 回退到 Codex 自带二进制时，只支持 `x64` / `arm64` 架构上的 Windows、macOS 和类 Unix 系统；其他平台请用 `codexHelper.codexExecutable` 显式指定路径。
 - 运行判定在 macOS / Windows 上只是时间近似：长思考的回合若超过 `runningStaleSeconds`（默认 300 秒）没有写入，会被显示为非运行中。Linux 上没有这个问题。
-- 一个会话同时出现在「已打开」与「置顶」两组时会有两行，各自记住自己的折叠与选中状态——它们用不同的树节点 id，这是刻意为之，否则 VS Code 会拿同一个 id 同时管两行。
 
 ## 开发
 
