@@ -219,6 +219,12 @@ export enum TreeItemCollapsibleState {
   Expanded = 2,
 }
 
+export enum ProgressLocation {
+  SourceControl = 1,
+  Window = 10,
+  Notification = 15,
+}
+
 export class TreeItem {
   label: string;
   collapsibleState?: TreeItemCollapsibleState;
@@ -252,6 +258,10 @@ export const window = {
   showWarningMessage: vi.fn(() => undefined),
   createTreeView: vi.fn(() => ({ dispose: vi.fn() })),
   registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
+  // 进度通知：测试里直接执行任务本身（通知的去留不影响断言）
+  withProgress: vi.fn(async (_options: unknown, task: (progress: unknown) => unknown) =>
+    task({ report: () => undefined }),
+  ),
   tabGroups: {
     all: [] as unknown[],
     activeTabGroup: { activeTab: undefined } as { activeTab: unknown },
@@ -283,6 +293,7 @@ export default {
   TreeItem,
   TreeItemCollapsibleState,
   ThemeIcon,
+  ProgressLocation,
   Uri,
   window,
   commands,

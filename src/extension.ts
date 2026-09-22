@@ -541,7 +541,15 @@ export function activate(context: vscode.ExtensionContext): void {
         // 新名字只写回了 Codex（本地 `threads` 还是旧的），刷一次列表才会显示出来
         if (await renameSession({ sessionId, label: labelOf(node) })) provider.refresh();
       },
-      newSession,
+      // 建会话要先起一个一次性 app-server（实测约 1.2s，其中 metadata/update 占 0.8s），
+      // 这段时间没有任何界面反馈就会像卡死：给一个进度通知，做完自动消失。
+      newSession: () =>
+        Promise.resolve(
+          vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: '正在创建 Codex 会话…' },
+            () => Promise.resolve(newSession()),
+          ),
+        ),
       pinSession: async (node) => {
         const id = sessionIdOf(node);
         if (!id) return;
