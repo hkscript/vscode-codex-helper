@@ -27,6 +27,7 @@ import { createSessionOpener } from './session/opener';
 import { createRowOpener } from './session/rowOpener';
 import { scanCodexTabs, selectTabsForConversation } from './session/openTabs';
 import { createPinStore } from './session/pinStore';
+import { createNewSessionWatch, type NewSessionWatch } from './session/newSessionWatch';
 import { scanHeldRollouts } from './session/processScan';
 import { createRunningTracker, type RunningTracker } from './session/runningTracker';
 import { buildSessionGroups } from './session/sessionStore';
@@ -37,17 +38,15 @@ import {
   type ExitableChild,
   type GitInfo,
 } from './session/sessionCreator';
-import { CODEX_DEFAULT_TAB_TITLE, planTabTitleSync, resourceKey } from './session/tabTitleSync';
+import { CODEX_DEFAULT_TAB_TITLE, resourceKey } from './session/tabTitleSync';
 import { createWriterLockProbe } from './session/writerLock';
 import { createSessionTreeProvider } from './ui/treeProvider';
 
 let appServer: AppServerClient | undefined;
 let autoRefresh: ReturnType<typeof setInterval> | undefined;
 let runningTracker: RunningTracker | undefined;
-/** 标题同步的兜底轮询；模块级是为了让 `deactivate()` 能回收（同 autoRefresh）。 */
-let titleSyncTimer: ReturnType<typeof setInterval> | undefined;
-/** 上面那个定时器的启动时刻：两者必须同生同灭，否则跨窗口/跨激活会互相误判超时。 */
-let titleSyncStartedAt = 0;
+/** 等新建会话进列表的轮询；模块级是为了让 `deactivate()` 能回收（同 autoRefresh）。 */
+let newSessionWatch: NewSessionWatch | undefined;
 
 /** `vscode.git` 的导出形状（只用到仓库 HEAD 与远端地址两处）。 */
 interface GitRepositoryLike {
@@ -196,6 +195,8 @@ export function activate(context: vscode.ExtensionContext): void {
     return scanCodexTabs(
       {
         all: vscode.window.tabGroups.all.map((group) => ({
+          // 栏号与组内下标：重开之后要把标签原样放回去
+          viewColumn: group.viewColumn,
           // 句柄一起带出去：重开一个标题过时的标签得先把它关掉，而关它只能靠它自己的句柄
           tabs: group.tabs.map((tab) => ({ label: tab.label, input: tab.input, handle: tab })),
         })),
@@ -219,27 +220,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   let tracker: RunningTracker | undefined;
 
-  /**
-   * 标题同步：把「标题还停在 Codex 默认值、但它绑定的会话已经有标题」的标签关掉重开一次。
-   *
-   * 为什么只能这么修：Codex 只在 `resolveCustomEditor` 那一刻写标题（先取
-   * `summary.preview`，随后用 `thread/list` 的 `name?.trim() || preview` 覆盖，超过 30 字符
-   * 截断），而 VS Code 不允许外部改别的扩展的标签标题。因此「让标题变对」= 让 Codex
-   * 重新 resolve 一次。只在会话空闲、且那个标签不是当前激活标签时动手，避免重载用户
-   * 正在看的对话。
-   *
-   * 触发方式有三条，缺一不可（实测踩过坑：只挂在树的 `load()` 上时，侧边栏没被重新读取
-   * 就永远不会跑，用户切走再回来标题照旧）：
-   *  1. `load()` 之后（树重新读取时顺带跑，数据最新，不用额外请求）；
-   *  2. `tabGroups.onDidChangeTabs`（切标签/开关标签时直接跑，不依赖树可见）；
-   *  3. 有界轮询（有候选标签时每 3 秒复查，5 分钟封顶）——事件漏发时兜底。
-   */
-  const syncedTitles = new Map<string, string>();
-  const TITLE_SYNC_POLL_MS = 3_000;
-  const TITLE_SYNC_MAX_MS = 5 * 60_000;
-  let syncingTitles = false;
-
-  /** 当前激活标签的 resource 身份（不是 Codex 标签时也返回它的 key，比不中就不会跳过）。 */
+  /** 当前激活标签的 resource 身份；`putTabBack` 用它确认「当前激活的就是刚打开那个」。 */
   function activeTabResourceKey(): string | null {
     const input = vscode.window.tabGroups.activeTabGroup?.activeTab?.input as
       | { uri?: UriLike }
@@ -248,89 +229,79 @@ export function activate(context: vscode.ExtensionContext): void {
     return uri && typeof uri.path === 'string' ? resourceKey(uri) : null;
   }
 
-  function stopTitleSyncTimer(): void {
-    if (titleSyncTimer) clearInterval(titleSyncTimer);
-    titleSyncTimer = undefined;
-    titleSyncStartedAt = 0;
-  }
-
-  function ensureTitleSyncTimer(): void {
-    if (titleSyncTimer) return;
-    titleSyncStartedAt = Date.now();
-    titleSyncTimer = setInterval(() => {
-      void syncTabTitles();
-    }, TITLE_SYNC_POLL_MS);
-  }
-
-  async function syncTabTitles(): Promise<void> {
-    if (syncingTitles) return;
-    const tabs = openTabs();
-    // 标签没了，那条「同步过」的记录也就没用了
-    const liveIds = new Set(tabs.map((tab) => tab.id));
-    for (const id of [...syncedTitles.keys()]) if (!liveIds.has(id)) syncedTitles.delete(id);
-
-    const pending = tabs.filter(
-      (tab) =>
-        tab.tabLabel === CODEX_DEFAULT_TAB_TITLE &&
-        tab.handle !== undefined &&
-        !syncedTitles.has(tab.id),
-    );
-    if (pending.length === 0) {
-      // 没有候选了（都同步过 / 标签关了）就别再轮询
-      stopTitleSyncTimer();
-      return;
-    }
-    if (titleSyncTimer && Date.now() - titleSyncStartedAt > TITLE_SYNC_MAX_MS) {
-      stopTitleSyncTimer();
-      return;
-    }
-    ensureTitleSyncTimer();
-
-    // 树可能压根没被重新读取（侧边栏隐藏、只是切了个标签），缓存里的会话列表就是旧的：
-    // 候选会话不在缓存里就自己拉一次，别指望 load()。
-    let list = threads;
-    if (pending.some((tab) => !list.some((thread) => thread.id === tab.id))) {
-      try {
-        const page = await api().listThreads({
-          searchTerm: filter,
-          cwd: workspaceCwd(),
-          cursor: null,
-        });
-        list = page.data;
-      } catch {
-        return;
-      }
-    }
-
-    const plan = planTabTitleSync({
-      tabs,
-      threads: list,
-      runningIds: tracker?.snapshot() ?? null,
-      activeTabKey: activeTabResourceKey(),
-      synced: syncedTitles,
-    });
-    if (plan.length === 0) return;
-
-    syncingTitles = true;
+  /**
+   * 把刚重开的标签放回组内的原来那一格。
+   *
+   * 公开 API 没有移动/排序标签的能力，只能用 VS Code 的内部命令 `moveActiveEditor`
+   * （「Move Editor Left/Right」「Move Editor to Start/End」这些内置动作执行的就是它）。
+   * 语义取自本机 1.96 的产物 `workbench.desktop.main.js`：`{to:'position', by:'tab', value}`
+   * 的 value 是 **1 基**下标，越界会被夹到末尾。拿不到原始下标、或命令不存在时都不动作
+   * ——最坏情况只是标签留在末尾。
+   */
+  async function putTabBack(tab: { uri: UriLike; index?: number }): Promise<void> {
+    const index = tab.index;
+    if (typeof index !== 'number' || index < 0) return;
+    // moveActiveEditor 作用于**当前激活编辑器**：如果重开没有把它激活（某些版本上
+    // preserveFocus 生效，或者用户手快切走了），这里动手就会挪错标签，所以先核对身份
+    const activeKey = activeTabResourceKey();
+    if (activeKey === null || activeKey !== resourceKey(tab.uri)) return;
     try {
-      for (const entry of plan) {
-        // 先记账再动手：重开本身会触发一轮刷新，没有这条记录就会来回抖
-        syncedTitles.set(entry.sessionId, entry.expectedTitle);
-        try {
-          await vscode.window.tabGroups.close(entry.tab.handle as never, true);
-          await vscode.commands.executeCommand(
-            'vscode.openWith',
-            entry.tab.uri,
-            CODEX_CONVERSATION_VIEW_TYPE,
-            { preview: false },
-          );
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : String(error);
-          vscode.window.showErrorMessage(`同步会话标签标题失败：${reason}`);
-        }
-      }
-    } finally {
-      syncingTitles = false;
+      await vscode.commands.executeCommand('moveActiveEditor', {
+        to: 'position',
+        by: 'tab',
+        value: index + 1,
+      });
+    } catch {
+      // 内部命令不在（换编辑器/换版本）就只是位置不还原，别的都不受影响
+    }
+  }
+
+  /**
+   * 点击某一行时：如果那个标签的标题还停在 Codex 默认值，就关掉重开一次。
+   *
+   * 为什么只能关掉重开：Codex 只在 `resolveCustomEditor` 那一刻写标题，而 VS Code 没有
+   * 原地重解析的办法——Codex 的自定义编辑器 `supportsMultipleEditorsPerDocument: false`
+   * 对应内部的 `singlePerResource`，用同一个 resource 再 resolve 一次只会拿回**已经开着**
+   * 的那个编辑器，等于什么都不做。所以「让标题变对」= 让那个标签重新出生一次。
+   *
+   * 之所以挂在点击上而不是后台自动跑：重开会重载面板（内容白一下、未发送的草稿会丢），
+   * 只有用户主动点这一行时才值得付这个代价。
+   *
+   * 返回 `true` = 已经重载好了（重开后它就是激活标签，调用方不用再聚焦）；`false` =
+   * 没什么可重载的、或者重载没做成 —— 两种情况调用方都会退到 `revealTab`，所以失败
+   * 不会让这一行打不开。
+   */
+ async function reloadUntitledTab(uri: UriLike): Promise<boolean> {
+    const key = resourceKey(uri);
+    const tab = openTabs().find((candidate) => resourceKey(candidate.uri) === key);
+    if (!tab || tab.tabLabel !== CODEX_DEFAULT_TAB_TITLE || tab.handle === undefined) return false;
+    try {
+      await vscode.window.tabGroups.close(tab.handle as never, true);
+    } catch (error) {
+      // 没关掉就别接着 openWith：那只会聚焦原来那个标签，白闪一下什么也没修好
+      const reason = error instanceof Error ? error.message : String(error);
+      console.log(`[codex-helper] 重载会话标签前关闭失败：${reason}`);
+      return false;
+    }
+    try {
+      await vscode.commands.executeCommand(
+        'vscode.openWith',
+        tab.uri,
+        CODEX_CONVERSATION_VIEW_TYPE,
+        {
+          // 落回它原来那一栏：不给 viewColumn 时会开在当前激活的栏里，标签等于搬了家
+          ...(typeof tab.viewColumn === 'number' ? { viewColumn: tab.viewColumn } : {}),
+          preview: false,
+        },
+      );
+      // 重开出来的标签落在末尾，把它挪回原来的那一格
+      await putTabBack(tab);
+      return true;
+    } catch (error) {
+      // 关掉了却没打开成功：返回 false 让调用方用 revealTab 兜底把它开回来
+      const reason = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(`重新加载会话标签失败：${reason}`);
+      return false;
     }
   }
 
@@ -362,12 +333,30 @@ export function activate(context: vscode.ExtensionContext): void {
       runningIds: tracker?.snapshot() ?? null,
       filter,
     });
-    // 树先拿到新数据，标题同步随后跑；关标签会再触发一轮刷新（syncedTitles 防抖）
-    void syncTabTitles();
     return groups;
   }
 
   const provider = createSessionTreeProvider({ load });
+
+  /**
+   * 新建出来的会话要等面板里发出第一条消息才进 `thread/list`（空会话不落列表），而那一刻
+   * 没有任何事件会通知本插件。不盯的话，侧边栏里点了 `+` 也不会有新行，直到手动刷新。
+   * 规则本身在 `newSessionWatch.ts` 里（纯逻辑 + 单测），这里只接真实的 IO 与定时器。
+   */
+  newSessionWatch = createNewSessionWatch({
+    // 不带 searchTerm：用户可能正开着过滤，那不能当成「这个会话还没出现」的证据
+    listThreadIds: async () =>
+      (await api().listThreads({ cwd: workspaceCwd(), cursor: null })).data.map(
+        (thread) => thread.id,
+      ),
+    openTabIds: () => new Set(openTabs().map((tab) => tab.id)),
+    refresh: () => provider.refresh(),
+    now: () => Date.now(),
+    setInterval: (fn, ms) => {
+      const handle = setInterval(fn, ms);
+      return { cancel: () => clearInterval(handle) };
+    },
+  });
 
   if (configuration().get<boolean>('showRunningIndicator') ?? true) {
     tracker = createRunningTracker({
@@ -485,8 +474,13 @@ export function activate(context: vscode.ExtensionContext): void {
     // nonce 让每次点击落到不同的 resource —— 同一 resource 在 Codex 那边只会聚焦已有标签
     uriApi: vscode.Uri,
     createNonce: () => randomUUID(),
-    // 首选：直接建出一个能被面板打开的会话（标签从出生就绑定会话）
-    createBoundSession: createBoundSessionInOneShot,
+    // 首选：直接建出一个能被面板打开的会话（标签从出生就绑定会话）；
+    // 建出来之后盯到它进列表为止，否则侧边栏里要手动刷新才看得到这一行
+    createBoundSession: async () => {
+      const id = await createBoundSessionInOneShot();
+      if (id) newSessionWatch?.watch(id);
+      return id;
+    },
   });
 
   /**
@@ -502,6 +496,8 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     revealTab: (uri) => opener.revealTab(uri),
     openSession: (id) => opener.openSession(id),
+    // 点这一行顺带把「标题还停在 Codex」的标签重载一次（见 reloadUntitledTab）
+    reloadUntitledTab,
   });
 
   context.subscriptions.push(
@@ -589,8 +585,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.window.tabGroups.onDidChangeTabs(() => {
       provider.refresh();
-      // 不依赖「树被重新读取」：切标签/开关标签时直接跑一次标题同步
-      void syncTabTitles();
     }),
   );
 
@@ -604,12 +598,9 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {
   if (autoRefresh) clearInterval(autoRefresh);
   autoRefresh = undefined;
-  // 标题同步的轮询定时器同样不能活过扩展宿主
-  if (titleSyncTimer) {
-    clearInterval(titleSyncTimer);
-    titleSyncTimer = undefined;
-  }
-  titleSyncStartedAt = 0;
+  // 等新会话进列表的轮询同样不能活过扩展宿主
+  newSessionWatch?.stop();
+  newSessionWatch = undefined;
   // inotify 句柄与轮询定时器不回收会比扩展活得更久。
   runningTracker?.dispose();
   runningTracker = undefined;

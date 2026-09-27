@@ -83,6 +83,15 @@ export interface OpenTab {
    * 快照没提供句柄时（老调用方 / 测试）为 `undefined`。
    */
   handle?: unknown;
+  /**
+   * 标签所在的编辑器组（`TabGroup.viewColumn`）。重开时要落回这一栏，否则标签会跑到
+   * 当前激活的那一栏去。快照没提供时为 `undefined`（此时重开落在当前栏）。
+   */
+  viewColumn?: number;
+  /**
+   * 标签在自己组里的下标（0 基，含同组的非 Codex 标签）。重开之后靠它把标签放回原处。
+   */
+  index?: number;
 }
 
 /** One row rendered in the tree. */

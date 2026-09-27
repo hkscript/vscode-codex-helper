@@ -16,8 +16,15 @@ describe('openTabs', () => {
     const second = conversationInput('conv-2');
     const tabGroups = {
       all: [
-        { tabs: [{ label: '价格排查', input: first }] },
         {
+          viewColumn: 1,
+          tabs: [
+            { label: 'README.md', input: { uri: uriApi.file('/repo/README.md') } },
+            { label: '价格排查', input: first },
+          ],
+        },
+        {
+          viewColumn: 2,
           tabs: [
             { label: '代码审查', input: second },
             { label: 'README.md', input: { uri: uriApi.file('/repo/README.md') } },
@@ -26,9 +33,10 @@ describe('openTabs', () => {
       ],
     };
 
+    // viewColumn / index 是「重开之后放回原位」要用的：下标是组内第几格（含普通标签）
     expect(scanCodexTabs(tabGroups)).toEqual([
-      { id: 'conv-1', tabLabel: '价格排查', uri: first.uri },
-      { id: 'conv-2', tabLabel: '代码审查', uri: second.uri },
+      { id: 'conv-1', tabLabel: '价格排查', uri: first.uri, viewColumn: 1, index: 1 },
+      { id: 'conv-2', tabLabel: '代码审查', uri: second.uri, viewColumn: 2, index: 0 },
     ]);
   });
 

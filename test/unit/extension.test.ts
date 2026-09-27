@@ -159,22 +159,6 @@ function makeTab(conversationId: string, label = `会话 ${conversationId}`) {
   };
 }
 
-/** 抓到树数据提供者，好让用例自己触发一次 load（标题同步挂在 load 上）。 */
-function captureTreeProvider(): { getChildren(node?: unknown): Promise<unknown> } {
-  let captured: { getChildren(node?: unknown): Promise<unknown> } | undefined;
-  (
-    vscode.window.createTreeView as unknown as { mockImplementation(fn: unknown): void }
-  ).mockImplementation(
-    (_id: string, options: { treeDataProvider: { getChildren(node?: unknown): Promise<unknown> } }) => {
-      captured = options.treeDataProvider;
-      return { dispose: vi.fn() };
-    },
-  );
-  activate(makeContext() as never);
-  if (!captured) throw new Error('没有拿到树数据提供者');
-  return captured;
-}
-
 /** 让假 app-server 满足一次完整 load：握手 + 两批 thread/list。 */
 async function answerListRequests(threads: unknown[], archived: unknown[] = []): Promise<void> {
   const child = await appServerChild();
@@ -268,6 +252,66 @@ describe('extension', () => {
       'chatgpt.conversationEditor',
       { preview: false },
     );
+  });
+
+  // REQ: 未标题标签的标题同步 / Scenario: 点这一行就把标题还停在 Codex 的标签重载一次
+  it('open_session_command_reloads_an_untitled_tab_in_place', async () => {
+    interceptTreeView();
+    activate(makeContext() as never);
+    const tab = makeTab('t9', 'Codex');
+    const plain = { label: 'a.ts', input: { uri: uriApi.file('/tmp/a.ts') } };
+    (vscode.window.tabGroups.all as unknown[]) = [{ viewColumn: 2, tabs: [plain, tab] }];
+    // 重开之后它就是激活标签（用户点的就是它），`putTabBack` 靠这个前提才敢动手
+    (vscode.window.tabGroups as { activeTabGroup: unknown }).activeTabGroup = {
+      activeTab: tab,
+      viewColumn: 2,
+    };
+
+    await activatedHandler('codexHelper.openSession')({
+      sessionId: 't9',
+      label: '会话 t9',
+      tabUri: uriApi
+        .file('/local/t9')
+        .with({ scheme: 'openai-codex', authority: 'route', query: '' }),
+      archived: false,
+    });
+
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledWith(tab, true);
+    const calls = (
+      vscode.commands.executeCommand as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls;
+    // 只有重开那一次 openWith：重开成功就不用再「聚焦已有标签」了
+    const opens = calls.filter((call) => call[0] === 'vscode.openWith');
+    expect(opens).toHaveLength(1);
+    expect(opens[0]![3]).toEqual({ viewColumn: 2, preview: false });
+    // 重开落在末尾，要挪回原来那一格（原下标 1 ⇒ 1 基的 2）
+    const move = calls.find((call) => call[0] === 'moveActiveEditor');
+    expect(move![1]).toEqual({ to: 'position', by: 'tab', value: 2 });
+  });
+
+  // REQ: 未标题标签的标题同步 / Scenario: 标题已经正确的标签只聚焦，不重载
+  it('open_session_command_only_reveals_an_already_titled_tab', async () => {
+    interceptTreeView();
+    activate(makeContext() as never);
+    const tab = makeTab('t10', '修复登录超时');
+    (vscode.window.tabGroups.all as unknown[]) = [{ viewColumn: 1, tabs: [tab] }];
+
+    await activatedHandler('codexHelper.openSession')({
+      sessionId: 't10',
+      label: '会话 t10',
+      tabUri: uriApi
+        .file('/local/t10')
+        .with({ scheme: 'openai-codex', authority: 'route', query: '' }),
+      archived: false,
+    });
+
+    // 没事可重载就别动那个标签：聚焦 = 一次 openWith，不该关标签也不该挪位置
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+    const calls = (
+      vscode.commands.executeCommand as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls;
+    expect(calls.filter((call) => call[0] === 'vscode.openWith')).toHaveLength(1);
+    expect(calls.find((call) => call[0] === 'moveActiveEditor')).toBeUndefined();
   });
 
   // REQ: 会话归档与删除 / Scenario: 预检命中「Codex 那侧持有」时连请求都不发（接线层）
@@ -447,29 +491,6 @@ describe('extension', () => {
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
-  // REQ: 未标题标签的标题同步 / Scenario: 未标题标签被同步成会话标题（接线层）
-  it('title_sync_reopens_untitled_tab_of_an_idle_session', async () => {
-    const provider = captureTreeProvider();
-    const tab = makeTab('t1', 'Codex');
-    (vscode.window.tabGroups.all as unknown[]) = [{ tabs: [tab] }];
-
-    const loading = provider.getChildren();
-    await flush();
-    await answerListRequests([makeThread({ id: 't1', name: '修复登录超时' })]);
-    await loading;
-    await flush();
-
-    // 关掉标题还停在 Codex 的标签，再用它**自己的 resource** 重开 —— 这是让 Codex
-    // 重新 resolve 并自己写标题的唯一手段
-    expect(vscode.window.tabGroups.close).toHaveBeenCalledTimes(1);
-    expect(vscode.window.tabGroups.close).toHaveBeenCalledWith(tab, true);
-    const openCall = (
-      vscode.commands.executeCommand as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls.find((call) => call[0] === 'vscode.openWith')!;
-    expect((openCall[1] as UriLike).path).toBe('/local/t1');
-    expect(openCall[3]).toEqual({ preview: false });
-  });
-
   // REQ: 新建会话 / Scenario: 非 git 工作区仍然建会话并打开绑定标签
   it('new_session_still_binds_in_a_non_git_workspace', async () => {
     interceptTreeView();
@@ -507,32 +528,50 @@ describe('extension', () => {
     expect(uri.path).toBe('/local/tid-nogit');
   });
 
-  // REQ: 未标题标签的标题同步 / Scenario: 切标签就能触发（不依赖侧边栏被重新读取）
-  it('title_sync_runs_on_tab_change_without_reloading_the_tree', async () => {
-    // 线上踩过：只挂在树的 load() 上时，侧边栏没被重新读取就永远不跑
-    let tabChangeListener: (() => void) | undefined;
-    (
-      vscode.window.tabGroups.onDidChangeTabs as unknown as { mockImplementation(fn: unknown): void }
-    ).mockImplementation((fn: () => void) => {
-      tabChangeListener = fn;
-      return { dispose: vi.fn() };
-    });
-    interceptTreeView();
-    activate(makeContext() as never);
+  // REQ: 新建会话 / Scenario: 会话进列表后自动出现在侧边栏（接线层）
+  it('new_session_arms_a_watch_and_refreshes_once_it_shows_up', async () => {
+    const intervalSpy = vi.spyOn(globalThis, 'setInterval');
+    try {
+      interceptTreeView();
+      activate(makeContext() as never);
+      (
+        vscode.extensions.getExtension as unknown as { mockImplementation(fn: unknown): void }
+      ).mockImplementation(() => undefined);
+      (vscode.workspace as { workspaceFolders?: unknown }).workspaceFolders = [
+        { uri: { ...uriApi.file('/tmp/not-a-repo'), fsPath: '/tmp/not-a-repo' } },
+      ];
 
-    const tab = makeTab('t2', 'Codex');
-    (vscode.window.tabGroups.all as unknown[]) = [{ tabs: [tab] }];
+      const before = (await appServerChildren()).length;
+      const pending = activatedHandler('codexHelper.newSession')();
+      await flush();
+      const oneShot = (await appServerChildren())[before]!;
+      await answerChildRound(oneShot);
+      await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-new' } } });
+      await answerChildRound(oneShot, { 'thread/metadata/update': {} });
+      await answerChildRound(oneShot, { 'thread/resume': {} });
+      await pending;
 
-    // 树从头到尾没被读取过（没人调 getChildren）：同步必须靠事件自己拿到会话列表
-    tabChangeListener?.();
-    await flush();
-    await answerListRequests([makeThread({ id: 't2', name: '切标签就该同步' })]);
-    await flush();
+      // `+` 已经把标签开出来了（假的 executeCommand 不会真开，这里补上这个前提）
+      (vscode.window.tabGroups.all as unknown[]) = [
+        { viewColumn: 1, tabs: [makeTab('tid-new', 'Codex')] },
+      ];
 
-    expect(vscode.window.tabGroups.close).toHaveBeenCalledWith(tab, true);
-    const openCall = (
-      vscode.commands.executeCommand as unknown as { mock: { calls: unknown[][] } }
-    ).mock.calls.find((call) => call[0] === 'vscode.openWith')!;
-    expect((openCall[1] as UriLike).path).toBe('/local/t2');
+      // 会话要等面板里发出第一条消息才进 thread/list，那一刻没有任何事件通知我们：
+      // 不盯的话侧边栏里点了 `+` 也不会有新行，直到手动刷新
+      const poll = intervalSpy.mock.calls.find((call) => call[1] === 3_000)?.[0] as
+        | (() => void)
+        | undefined;
+      expect(poll).toBeDefined();
+
+      const checked = poll!();
+      await flush();
+      await answerListRequests([makeThread({ id: 'tid-new', name: '第一个会话' })]);
+      await flush();
+      await checked;
+
+      expect(refreshes).toBeGreaterThan(0);
+    } finally {
+      intervalSpy.mockRestore();
+    }
   });
 });

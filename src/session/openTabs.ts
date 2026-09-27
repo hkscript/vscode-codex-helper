@@ -8,6 +8,8 @@ import type { OpenTab, UriLike } from '../codex/types';
  */
 export interface TabGroupsSnapshot {
   all: Array<{
+    /** 组所在的栏（`TabGroup.viewColumn`）；没给就不还原重开后的位置。 */
+    viewColumn?: number;
     tabs: Array<{
       label: string;
       input: unknown;
@@ -45,7 +47,9 @@ export function scanCodexTabs(
 
   const open: OpenTab[] = [];
   for (const group of tabGroups.all ?? []) {
-    for (const tab of group.tabs ?? []) {
+    const tabs = group.tabs ?? [];
+    for (let index = 0; index < tabs.length; index += 1) {
+      const tab = tabs[index]!;
       if (!isCustomInput(tab.input)) continue;
       const input = tab.input as { viewType: string; uri: UriLike };
       if (input.viewType !== viewType) continue;
@@ -55,7 +59,15 @@ export function scanCodexTabs(
       // row that opened a nonexistent conversation when clicked.
       const id = parseConversationId(input.uri);
       if (!id) continue;
-      open.push({ id, tabLabel: tab.label, uri: input.uri, handle: tab.handle });
+      // 下标是「标签在自己组里的位置」（含同组的普通文本标签），重开之后用它放回原位
+      open.push({
+        id,
+        tabLabel: tab.label,
+        uri: input.uri,
+        handle: tab.handle,
+        viewColumn: group.viewColumn,
+        index,
+      });
     }
   }
   return open;
