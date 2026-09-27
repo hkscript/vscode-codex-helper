@@ -461,6 +461,8 @@ describe('extension', () => {
     const oneShot = children[before]!;
     const requests = [
       ...(await answerChildRound(oneShot)),
+      // 建会话之前先读一眼「上次用过的思考级别」（本轮没有任何历史级别）
+      ...(await answerChildRound(oneShot, { 'thread/list': { data: [], nextCursor: null } })),
       // 每次回包之后才写下一个请求：一轮一个
       ...(await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-1' } } })),
       ...(await answerChildRound(oneShot, { 'thread/metadata/update': {} })),
@@ -471,12 +473,13 @@ describe('extension', () => {
     // 建会话的调用序列就是本机 probe 出来的那条（少了 metadata/update 面板打不开）
     expect(requests.map((request) => request.method)).toEqual([
       'initialize',
+      'thread/list',
       'thread/start',
       'thread/metadata/update',
       'thread/resume',
     ]);
-    expect(requests[1]!.params).toEqual({ cwd: '/repo' });
-    expect(requests[2]!.params).toEqual({
+    expect(requests[2]!.params).toEqual({ cwd: '/repo' });
+    expect(requests[3]!.params).toEqual({
       threadId: 'tid-1',
       gitInfo: { branch: 'main', sha: 'abc123', originUrl: 'git@example.com:o/r.git' },
     });
@@ -489,6 +492,58 @@ describe('extension', () => {
     expect(command).toBe('vscode.openWith');
     expect(uri.path).toBe('/local/tid-1');
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  // REQ: 新建会话记忆思考级别 / Scenario: 新建会话把上次用过的级别写回配置（接线层）
+  it('new_session_writes_the_last_used_reasoning_effort_into_the_config', async () => {
+    interceptTreeView();
+    activate(makeContext() as never);
+    answerGitInfo();
+    (vscode.workspace as { workspaceFolders?: unknown }).workspaceFolders = [
+      { uri: { ...uriApi.file('/repo'), fsPath: '/repo' } },
+    ];
+
+    const before = (await appServerChildren()).length;
+    const pending = activatedHandler('codexHelper.newSession')();
+    await flush();
+
+    const oneShot = (await appServerChildren())[before]!;
+    const requests = [
+      ...(await answerChildRound(oneShot)),
+      // 最近一行是刚建出来的空会话（没有级别），再往前才是用户真正用过的级别
+      ...(await answerChildRound(oneShot, {
+        'thread/list': {
+          data: [
+            makeThread({ id: 'fresh', reasoningEffort: null, updatedAt: 30 }),
+            makeThread({ id: 'used', reasoningEffort: 'high', updatedAt: 20 }),
+          ],
+          nextCursor: null,
+        },
+      })),
+      ...(await answerChildRound(oneShot, { 'config/read': { config: { model_reasoning_effort: 'low' } } })),
+      ...(await answerChildRound(oneShot, { 'config/batchWrite': { status: 'ok' } })),
+      ...(await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-effort' } } })),
+      ...(await answerChildRound(oneShot, { 'thread/metadata/update': {} })),
+      ...(await answerChildRound(oneShot, { 'thread/resume': {} })),
+    ];
+    await pending;
+
+    expect(requests.map((request) => request.method)).toEqual([
+      'initialize',
+      'thread/list',
+      'config/read',
+      'config/batchWrite',
+      'thread/start',
+      'thread/metadata/update',
+      'thread/resume',
+    ]);
+    // 写配置必须走 app-server 自己的接口：它自己做 TOML 合并，config.toml 是软链也不会被换成普通文件
+    expect(requests[3]!.params).toEqual({
+      edits: [{ keyPath: 'model_reasoning_effort', value: 'high', mergeStrategy: 'upsert' }],
+      filePath: null,
+      expectedVersion: null,
+      reloadUserConfig: true,
+    });
   });
 
   // REQ: 新建会话 / Scenario: 非 git 工作区仍然建会话并打开绑定标签
@@ -509,6 +564,7 @@ describe('extension', () => {
     const oneShot = (await appServerChildren())[before]!;
     const requests = [
       ...(await answerChildRound(oneShot)),
+      ...(await answerChildRound(oneShot, { 'thread/list': { data: [], nextCursor: null } })),
       ...(await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-nogit' } } })),
       ...(await answerChildRound(oneShot, { 'thread/metadata/update': {} })),
       ...(await answerChildRound(oneShot, { 'thread/resume': {} })),
@@ -517,7 +573,7 @@ describe('extension', () => {
 
     // 「这个目录不是 git 仓库」不该让新建会话退化：写全零 sha 占位照样能落盘，
     // 而 Codex 前端只读 branch/originUrl，占位在界面上看不见。
-    expect(requests[2]!.params).toEqual({
+    expect(requests[3]!.params).toEqual({
       threadId: 'tid-nogit',
       gitInfo: { sha: '0'.repeat(40) },
     });
@@ -546,6 +602,7 @@ describe('extension', () => {
       await flush();
       const oneShot = (await appServerChildren())[before]!;
       await answerChildRound(oneShot);
+      await answerChildRound(oneShot, { 'thread/list': { data: [], nextCursor: null } });
       await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-new' } } });
       await answerChildRound(oneShot, { 'thread/metadata/update': {} });
       await answerChildRound(oneShot, { 'thread/resume': {} });

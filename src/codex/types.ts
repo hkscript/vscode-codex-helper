@@ -39,6 +39,11 @@ export interface Thread {
   updatedAt: number;
   /** Rollout file path. Optional: the file is created lazily on the first turn. */
   path?: string | null;
+  /**
+   * 该会话最近一次真正用过的思考级别（`thread/list` 的 `reasoningEffort`）。
+   * `null` = 从没显式设过，Codex 面板打开它时会退回面板自己的默认值。
+   */
+  reasoningEffort?: string | null;
 }
 
 export type TurnStatus = 'inProgress' | 'completed' | 'interrupted' | 'failed';

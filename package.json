@@ -194,6 +194,21 @@
           "type": "number",
           "default": 5,
           "description": "文件监听不可用时的兜底轮询间隔（秒）。0 表示关闭兜底轮询。"
+        },
+        "codexHelper.newSessionReasoningEffort": {
+          "type": "string",
+          "enum": [
+            "remember",
+            "off",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "remember",
+          "markdownDescription": "新建会话时同步的思考级别（写进 Codex 配置的 `model_reasoning_effort`）。`remember` = 跟随你上次用过的级别；`off` = 不干预；其余取值 = 固定用这个级别。"
         }
       }
     }

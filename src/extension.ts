@@ -11,9 +11,10 @@ import {
   type ChildProcessLike,
 } from './codex/appServerClient';
 import { CODEX_EXTENSION_ID, resolveCodexBinary } from './codex/binary';
+import { createConfigWriter } from './codex/configWriter';
 import { CODEX_CONVERSATION_VIEW_TYPE } from './codex/conversationUri';
 import { createNoRetryPatcher, createPatchOnOpen } from './codex/noRetryPatch';
-import { createThreadApi } from './codex/threadApi';
+import { DEFAULT_PAGE_SIZE, createThreadApi } from './codex/threadApi';
 import type { SessionGroup, Thread, UriLike } from './codex/types';
 import {
   createArchiveSessionCommand,
@@ -24,6 +25,7 @@ import {
   registerCommands,
 } from './commands';
 import { createSessionOpener } from './session/opener';
+import { syncNewSessionReasoningEffort } from './session/reasoningEffort';
 import { createRowOpener } from './session/rowOpener';
 import { scanCodexTabs, selectTabsForConversation } from './session/openTabs';
 import { createPinStore } from './session/pinStore';
@@ -167,6 +169,20 @@ export function activate(context: vscode.ExtensionContext): void {
     });
 
     try {
+      // 建会话之前先把「上次用过的思考级别」同步进 Codex 的配置（`model_reasoning_effort`）：
+      // 面板自己新建草稿时会读这个默认值，这样通过 `+` 开出来的新会话不会每次都退回面板兜底的
+      // medium。每一步失败都在 syncNewSessionReasoningEffort 内部咽掉，不影响下面这条主流程。
+      await syncNewSessionReasoningEffort({
+        setting: configuration().get<string>('newSessionReasoningEffort'),
+        listThreads: async () =>
+          (
+            await createThreadApi(oneShot, {
+              pageSize: configuration().get<number>('pageSize') ?? DEFAULT_PAGE_SIZE,
+            }).listThreads({})
+          ).data,
+        writeEffort: (effort) => createConfigWriter(oneShot).syncReasoningEffort(effort),
+        log: (message) => console.log(`[codex app-server:new-session] ${message}`),
+      });
       return await createBoundSession(oneShot, {
         cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,
         gitInfo,
