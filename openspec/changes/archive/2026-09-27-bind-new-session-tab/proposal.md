@@ -54,3 +54,16 @@
 | `thread/increment_elicitation`、`thread/settings/update`、`thread/resume{history/path}` 都不能替代 `metadata/update`：前两者要求 `experimentalApi` 能力，后两者报「requires experimentalApi」/「no rollout found」/「cannot resume with history while it is already running」 | probe15 / probe16 / probe17 / probe18 | `[Verified]` |
 | Codex 前端只用 `gitInfo.branch` 与 `originUrl`（`e?.branch?.trim()` / `e?.originUrl?.trim()`），`sha` 不上界面 | 上游 webview `assets/app-initial-*.js` | `[Verified]` |
 | 非 git 目录下「全零 sha 占位 → 落盘 → 另一个进程 resume → 真实回合」整条链路可用 | probe20：resume OK turns=0、turn/completed、`thread/list` 拿到会话 | `[Verified]` |
+
+## Amendments
+
+### 2026-09-27：后台自动同步退役，改为「点击那一行时重载」+「等新会话进列表」
+
+**原因（用户实测反馈，0.0.14~0.0.17）**：① 后台自动重开标签会闪、会抢焦点、会把标签挪到组内末尾（`preserveFocus` 拦不住新建编辑器被激活）；② 新建的会话要手动点刷新才出现在侧边栏——空会话不进 `thread/list`，而面板里发第一条消息那一刻没有任何事件会通知本插件。
+
+**摘要**：
+
+- 「未标题标签同步」由后台三条触发（`load()` / `onDidChangeTabs` / 轮询）改为**只在用户点击侧边栏那一行时**重载：`rowOpener` 先问一次 `reloadUntitledTab`，命中就关标签并用它自己的 resource 重开（带 `viewColumn`，随后 `moveActiveEditor` 放回原下标），失败退化为聚焦/打开。`planTabTitleSync` / `expectedTabTitle` / 焦点快照与归还 / `syncedTitles` 全部删除。
+- **新增**「新建会话出现后自动进入侧边栏」：`newSessionWatch` 在建出会话后盯住列表（3 秒一拍、10 分钟上限、标签关掉即放弃、不比对搜索结果），会话一出现就刷新侧边栏。
+- 受影响用例：T-107~T-114、T-120、T-123、T-126~T-131 随机制退役（已在 test-plan.md 的「已退役用例（历史）」里标 `❌ 已废弃`）；新增 T-132~T-145。
+- 2026-09-27 五次 amend 只补文档缺口（spec delta 的 REMOVED/ADDED 结构、缺失 scenario、design 必填章节、plan-ready checkbox），不改行为。

@@ -69,6 +69,7 @@
 - 测试先行：先写 T-038（`archived_row_uses_archived_context_value`）与 T-042（`archived_row_passes_archived_flag`）——现在既没有 `session.archived` 这个 contextValue，命令参数里也没有 `archived` 字段，两条必红 [Verified]
 - 验证方式：`npx vitest run test/unit/treeProvider.test.ts`
 - 确定性：[Verified]
+- 修订（2026-09-27 amend）：本条目标原本就覆盖「默认折叠态」与「已归档 contextValue」；design 改动点 4 的声明已按本条与实际落点同步（toItemNode / defaultCollapsibleState → 随改）。无代码/测试变更。
 - [x] 树条目携带标签 resource 与已归档 contextValue
 
 ### Task 6: 打开会话的接线与文档

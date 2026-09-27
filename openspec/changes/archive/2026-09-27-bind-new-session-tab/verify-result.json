@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "change": "bind-new-session-tab",
+  "head": "854f0ec257fa2d512d81be607309e25050cb9df4",
+  "fingerprint": "sha256:c99689e0dad77c6ecbad16a22482443441e4ab4de7faf16abc0fcc9902f13e21",
+  "testRuns": [
+    {
+      "name": "full-suite",
+      "exitCode": 0,
+      "tests": 178,
+      "files": 22,
+      "command": "pnpm test"
+    },
+    {
+      "name": "typecheck",
+      "exitCode": 0,
+      "command": "pnpm typecheck"
+    }
+  ],
+  "scenarioCoverage": {
+    "mapped": 14,
+    "total": 14
+  },
+  "designConsistency": {
+    "pass": true,
+    "blockers": [],
+    "notes": [
+      "改动点 1~7 逐条核验：落点全部对得上声明的方法（详见 verify-issues.md 的「改动点逐条核验」）",
+      "check-design-consistency 唯一 warning：改动点 6 的 `src/session/newSessionWatch.ts::createNewSessionWatch` 被判「未落地」，因为该文件是未跟踪的新文件、git diff 看不见它；反证：文件存在（:33 导出）、被 src/extension.ts:346 调用、对应单测 6 条全绿。属工具局限，已向用户披露并获确认",
+      "本次 amend 补正的两处文档缺口：`src/extension.ts::deactivate`（随改，回收等待轮询）与 `src/codex/types.ts::OpenTab`（接口改动，从 `- 目标：` 声明行改为正文登记）"
+    ]
+  },
+  "userConfirmation": {
+    "received": true
+  }
+}

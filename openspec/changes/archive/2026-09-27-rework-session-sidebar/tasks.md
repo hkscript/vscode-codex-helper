@@ -1,0 +1,11 @@
+- [x] Task 1: 标签扫描丢弃未绑定面板并保留标签 resource
+- [x] Task 2: 树数据按「置顶 / 最近 / 历史 / 已归档」归位
+- [x] Task 3: 打开目标判定 + 行打开编排（含「归档行先取消归档」）
+- [x] Task 4: opener 增加按 resource 聚焦的入口
+- [x] Task 5: 树条目携带标签 resource 与已归档 contextValue
+- [x] Task 6: 打开会话的接线与文档
+- [x] Task 7: app-server 归档 / 取消归档 / 删除与已归档列表
+- [x] Task 8: 归档 / 取消归档 / 删除三个命令
+- [x] Task 9: 清单贡献与「被删会话的标签」定位
+- [x] Task 10: 归档 / 删除的接线与文档
+- [x] Task 11: 侧边栏标题不重复（amend 追加）

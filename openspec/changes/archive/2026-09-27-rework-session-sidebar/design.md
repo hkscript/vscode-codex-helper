@@ -83,14 +83,17 @@
 
 语义变化：分组从「已打开 / 置顶 / 历史」变成「置顶 / 最近 / 历史 / 已归档」，入参增加 `archivedThreads`（来自 `thread/list {archived: true}`）。归属唯一确定且互斥：**已归档优先**（`claimed` 先吃掉已归档 id，保证同一会话不会既在「已归档」又在别处）；其余会话里置顶的进「置顶」；再其余按 `updatedAt` 倒序取前 `RECENT_LIMIT = 10` 个进「最近」；剩下的进「历史」。**已打开的会话不再被排除**，而是把 `open` 与 `tabUri` 标在行上；「已归档」组的行 `archived` 为 `true`，其余组为 `false`。`RECENT_LIMIT` 作为模块常量导出，供测试与后续调整引用。上游：`src/extension.ts::load`；下游：`treeProvider.getTreeItem`、`rowOpener`。`[Verified]`
 
-### 改动点 4：树条目的命令参数带上标签 resource
+### 改动点 4：树条目的命令参数、归档优先级与默认折叠态
 
 - 目标：`src/ui/treeProvider.ts::getTreeItem`
-- 并行路径：`src/ui/treeProvider.ts::getChildren` → 不随改
-- 并行路径：`src/ui/treeProvider.ts::cwdBasename` → 不随改
-- 并行路径：`src/ui/treeProvider.ts::defaultCollapsibleState` → 不随改（`history` 折叠、其余展开，两组时语义不变）
+- 并行路径：`src/ui/treeProvider.ts::toItemNode` → 随改（归档优先的 contextValue，供「取消归档」菜单锚定）
+- 并行路径：`src/ui/treeProvider.ts::defaultCollapsibleState` → 随改（分组变四组后「已归档」也要默认折叠，见 D44）
+- 并行路径：`src/ui/treeProvider.ts::getChildren` → 不随改（渲染路径未变）
+- 并行路径：`src/ui/treeProvider.ts::cwdBasename` → 不随改（末级目录名的规则未变）
 
-上游：`buildSessionGroups` 的行数据；下游：`resolveOpenTarget`。图标与 contextValue 的既有优先级保持不变。`[Verified]`
+上游：`buildSessionGroups` 的行数据；下游：`resolveOpenTarget`。图标优先级保持不变（运行中 > 已打开 > 普通）；`contextValue` 的优先级**变为归档优先**——`session.archived` → `session.pinned` → `session.open` → `session`，因为「已归档」条目的右键菜单是「取消归档」，它与置顶语义正交（D45）。`[Verified]`
+
+> **修订说明（2026-09-27 amend）**：本改动点原写作「`defaultCollapsibleState` → 不随改（`history` 折叠、其余展开，两组时语义不变）」，那是三组版本的措辞，也漏了 `toItemNode` 的 `contextValue` 改动。分组改为四组（D44）后，`defaultCollapsibleState` 必须跟着折叠「已归档」，`toItemNode` 必须给出归档优先的 `contextValue`——两处声明按**实际落点**补齐。**代码与测试均未改动**（verify 已确认代码行为与 spec「置顶与最近分组默认展开历史与已归档分组默认折叠」、T-018、T-038 一致），本次只是把 design 的声明与代码对齐。
 
 ### 改动点 5：打开目标的判定与「点哪行去哪」的编排
 
@@ -237,9 +240,9 @@
 | 点开「已归档」组的条目 | 先 `thread/unarchive`，再打开；刷新后该会话离开「已归档」组 | 由 T-040、T-042、INV-005 钉住 |
 | `thread/unarchive` 失败但用户点了打开 | 报错，且**仍然打开**该会话；列表保持它在「已归档」组 | 由 T-041、INV-005 钉住 |
 | 点开未归档条目 | 不得发出任何 `thread/unarchive` | 由 T-041、INV-005 钉住 |
-| 点归档按钮（未归档条目） | 不弹确认，直接 `thread/archive {threadId}`；成功后刷新；标签不动 | 由 T-025、T-028、T-034、INV-004 钉住 |
+| 点归档按钮（未归档条目） | 不弹确认，直接 `thread/archive {threadId}`；成功后刷新；标签不动 | 由 T-025、T-028、INV-004 钉住 |
 | 点删除按钮（已归档条目） | 不弹确认，直接 `thread/delete {threadId}`；成功后刷新 | 由 T-024、T-029、INV-004 钉住 |
-| 取消归档 | `thread/unarchive {threadId}`；成功后刷新；标签不动 | 由 T-026、T-030、T-034、INV-004 钉住 |
+| 取消归档 | `thread/unarchive {threadId}`；成功后刷新；标签不动 | 由 T-026、T-030、INV-004 钉住 |
 | 三个命令失败 | 报错；不刷新、不关标签、不改本地状态 | 由 T-031、T-032 钉住 |
 | 未归档条目的悬停区 | 只有「归档」；没有「删除」 | 由 T-033 钉住 |
 | 被删会话的标签定位 | 只有 `conversationId` 等于被删 id 的标签被选中 | 由 T-039 钉住 |

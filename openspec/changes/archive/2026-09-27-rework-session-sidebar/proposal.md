@@ -87,3 +87,16 @@
 - **已打开但服务端列表里没有的会话不再有行**：旧实现靠「已打开」组兜底显示（标题取标签标题）。取消该组后这类会话消失（无标题/cwd 来源）。判定为可接受：它是「幽灵行」的另一面，与 D8「陈旧置顶丢弃」同一条原则。`[Inferred]`
 - **本变更前点出来的 `/local/open-tab:N` 坏标签**不由本插件清理（上游认为它是无效会话），用户手动关闭即可。`[Verified]`
 - 方案依赖「标签 resource 重启后不变」（否则聚焦会落空）。缓解：上游 `ensureRestoredConversationTabsResolved` 就是按各自 uri 重开；即便 resource 变了，打开的也只是另一个标签，不会伪造会话。`[Inferred]`
+
+## Amendments
+
+### 2026-09-27
+
+- **原因**：verify（2026-09-27）做改动点归属对账时发现 design「现状与影响面」改动点 4 的声明漂移——
+  `defaultCollapsibleState` 被标成「不随改」，但分组从三组变四组（D44）后它必须随改；
+  `toItemNode` 的归档优先 `contextValue` 改动也没有被声明。
+- **摘要**：只把 design 的声明与**实际落点**对齐，**不改需求、不改 scenario、不改代码与测试**。
+  改动点 4 的声明改为 `toItemNode` → 随改、`defaultCollapsibleState` → 随改；
+  顺带修掉 design 边界条件表里两处指向**不存在**的测试号 `T-034` 的引用
+  （改为 T-025 / T-028 / INV-004 与 T-026 / T-030 / INV-004）。
+- **测试影响**：0 条（无 scenario 预期行为变化），见 test-plan.md「测试影响分析 (2026-09-27)」。

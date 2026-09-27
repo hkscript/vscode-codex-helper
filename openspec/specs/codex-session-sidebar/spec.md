@@ -111,31 +111,9 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 - **WHEN** 调用 `listThreads({ cursor: 'abc' })`
 - **THEN** 发送的参数中 `cursor` 为 `abc`
 
-### Requirement: 已打开标签页识别
-
-插件 SHALL 从 VS Code 标签页状态中识别出属于 Codex 会话编辑器的标签，并解析其会话 id。
-
-#### Scenario: 识别 Codex 会话标签并解析 id
-
-- **GIVEN** 一个标签的 input 是 custom 编辑器，viewType 为 `chatgpt.conversationEditor`，uri 为 `openai-codex://route/local/01a0becc-10ff-7a00-8574-923d5b93bae0`
-- **WHEN** 调用 `scanCodexTabs`
-- **THEN** 结果含一项，其 `conversationId` 为 `01a0becc-10ff-7a00-8574-923d5b93bae0`
-
-#### Scenario: 忽略非 Codex 标签
-
-- **GIVEN** 标签集合中含一个普通文本编辑器标签和一个 viewType 为 `other.editor` 的 custom 标签
-- **WHEN** 调用 `scanCodexTabs`
-- **THEN** 结果为空数组
-
-#### Scenario: 新建但尚未绑定会话的标签保留为未命名项
-
-- **GIVEN** 一个 Codex custom 标签的 uri 为 `openai-codex://route/extension/panel/new`
-- **WHEN** 调用 `scanCodexTabs`
-- **THEN** 结果含一项，其 `conversationId` 为 `null`，且保留该标签的显示标题
-
 ### Requirement: 会话打开与聚焦
 
-插件 SHALL 通过 VS Code 的 `vscode.openWith` 命令把指定会话交给 Codex 的会话编辑器打开；打开失败时 SHALL 报错，且不得改为新建空会话。
+插件 SHALL 通过 VS Code 的 `vscode.openWith` 命令把会话交给 Codex 的会话编辑器打开。对于带有标签 resource 的条目（该会话已经在标签页里打开），插件 SHALL 打开**该标签自己的 resource**，从而聚焦已打开的标签而不是新建；没有标签 resource 的条目 SHALL 按会话 id 打开。对于处于「已归档」状态的条目，打开前 SHALL 先调用 `thread/unarchive`（对齐 Codex 自己的「取消归档并打开」），使打开后的会话回到非归档状态；取消归档失败时 SHALL 报错但**仍然打开**该会话。打开失败时 SHALL 报错，且不得改为新建空会话。
 
 #### Scenario: 用正确的 URI 与 viewType 打开会话
 
@@ -154,6 +132,44 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 - **GIVEN** `vscode.openWith` 调用会抛出错误
 - **WHEN** 调用 `openSession(id)`
 - **THEN** 向用户展示含该会话 id 的错误消息，且全程没有执行过 `chatgpt.newCodexPanel` 命令
+
+#### Scenario: 已打开的会话按它自己的标签 resource 打开
+
+- **GIVEN** 一条会话条目带有标签 resource `openai-codex://route/local/conv-1?projectId=p1`
+- **WHEN** 解析该条目的打开目标并执行
+- **THEN** `vscode.openWith` 的第一个参数是**该标签自己的 resource**（含 query `projectId=p1`，而不是由 id 重新拼出的无 query URI），第二个参数为 `chatgpt.conversationEditor`，第三个参数中 `preview` 为 `false`
+
+#### Scenario: 远端标签对应的会话按它自己的远端 resource 打开
+
+- **GIVEN** 一条会话条目带有标签 resource `openai-codex://route/remote/conv-r`
+- **WHEN** 解析该条目的打开目标并执行
+- **THEN** `vscode.openWith` 的第一个参数的 path 为 `/remote/conv-r`，而不是 `/local/conv-r`
+
+#### Scenario: 没有标签 resource 的条目仍按会话 id 打开
+
+- **GIVEN** 一条条目的会话 id 为 `conv-9`，且它没有对应的已打开标签（`tabUri` 为 `null` 或形状不合法）
+- **WHEN** 解析该条目的打开目标
+- **THEN** 打开目标为「按会话 id 打开」，其 URI 由 `buildConversationUri('conv-9')` 得出
+
+#### Scenario: 打开标签 resource 失败时报错且不新建
+
+- **GIVEN** `vscode.openWith` 对某个标签 resource 调用会抛出错误
+- **WHEN** 请求聚焦该标签
+- **THEN** 向用户展示含失败原因的错误消息，且全程没有执行过 `chatgpt.newCodexPanel` 命令
+
+#### Scenario: 打开已归档的会话会先取消归档
+
+- **GIVEN** 已归档会话 `t1` 出现在「已归档」组
+- **WHEN** 用户点该条目打开会话
+- **THEN** 先发出一次 `thread/unarchive`（参数 `{threadId: 't1'}`），随后才打开该会话
+- **AND** 列表刷新后 `t1` 不再出现在「已归档」组
+
+#### Scenario: 取消归档失败不阻止打开
+
+- **GIVEN** 已归档会话 `t1`，且 `thread/unarchive` 返回 error
+- **WHEN** 用户点该条目打开会话
+- **THEN** 向用户展示错误消息
+- **AND** 该会话仍被打开（不因为取消归档失败而吞掉打开动作）
 
 ### Requirement: 会话重命名
 
@@ -182,35 +198,6 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 - **GIVEN** `thread/name/set` 返回 error
 - **WHEN** 执行重命名命令
 - **THEN** 向用户展示错误消息，命令返回 `false`，且不刷新会话列表（不修改本地列表中的名称）
-
-### Requirement: 会话置顶
-
-插件 SHALL 把置顶的会话 id 持久化在插件自身的全局状态中，并让置顶会话排在列表前部。置顶会话 SHALL NOT 因为该会话被打开而从「置顶」分组移除。
-
-#### Scenario: 置顶后写入全局状态
-
-- **GIVEN** 全局状态中 `codexHelper.pinnedSessionIds` 为空
-- **WHEN** 对会话 `t1` 执行置顶
-- **THEN** 全局状态中 `codexHelper.pinnedSessionIds` 为 `['t1']`
-- **AND** 再次对 `t1` 执行置顶后仍为 `['t1']`（幂等，不产生重复项）
-
-#### Scenario: 取消置顶后从全局状态移除
-
-- **GIVEN** 全局状态中 `codexHelper.pinnedSessionIds` 为 `['t1','t2']`
-- **WHEN** 对会话 `t1` 执行取消置顶
-- **THEN** 全局状态中 `codexHelper.pinnedSessionIds` 为 `['t2']`
-
-#### Scenario: 首次读取时全局状态为空值
-
-- **GIVEN** 全局状态中不存在 `codexHelper.pinnedSessionIds` 键
-- **WHEN** 调用 `list()`
-- **THEN** 返回空数组而不是抛错
-
-#### Scenario: 取消置顶后已打开的那一行仍然保留
-
-- **GIVEN** 会话 `a` 既被置顶又有已打开的标签，「已打开」与「置顶」两组各有一行 `a`
-- **WHEN** 对 `a` 执行取消置顶并重新构建树数据
-- **THEN** 「置顶」组不再含 `a`，「已打开」组仍含 `a`
 
 ### Requirement: 错误可见性
 
@@ -384,35 +371,271 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 - **WHEN** 释放追踪器
 - **THEN** 2 个监听全部被释放，定时器被清除
 
-### Requirement: 树视图组织、状态标识与过滤
+### Requirement: 新建会话（直接建会话并打开绑定标签）
 
-侧边栏 SHALL 把会话分为「已打开」「置顶」「历史」三组展示，并支持按关键词过滤。一个会话 SHALL 可以同时出现在「已打开」与「置顶」两组中，「历史」组 SHALL 与前两组互斥。同一会话在不同分组中的树节点 SHALL 使用不同的节点 id。条目 SHALL 以图标呈现「运行中」状态；条目的描述文本 SHALL 呈现该会话所在目录的**末级目录名**，并在会话被置顶时以 `📌` 作为前缀；会话没有目录信息时，描述文本 SHALL 不含目录部分。「已打开」与「置顶」分组 SHALL 默认展开（不折叠），「历史」分组 SHALL 默认折叠。
+点击「新建会话」时，插件 SHALL 优先走「直接建会话」：用一次性 `codex app-server` 子进程依次执行 `thread/start`、`thread/metadata/update`（携带工作区真实的 gitInfo）、`thread/resume`，等该子进程退出后，用该会话 id 的会话 URI（`vscode.openWith` + `chatgpt.conversationEditor`）打开标签——使标签从出生就绑定会话，标题由 Codex 自己写。
+
+插件 SHALL NOT 用 `thread/name/set` 作为让 Codex 落盘的触发器。工作区不是 git 仓库（探测不到真实 gitInfo）时，插件 SHALL 改用**全零 sha 占位**（`PLACEHOLDER_GIT_INFO`）继续建会话 —— 该占位只落在 `gitInfo.sha`，而 Codex 前端只读 `branch` / `originUrl`，故不可见；「目录没有 git」不得让新建会话退化。只有建会话任一步失败时，才回退为打开今天这个空白面板（`/extension/panel/new` 带唯一 nonce），且 SHALL NOT 报错打断用户（建会话失败不是用户动作的失败）。
+
+本命令与「会话打开与聚焦」中「打开失败不得回退新建」不冲突：那条约束限定的是**打开既有会话失败**时的行为，本条是**用户显式发起**的新建入口。
+
+#### Scenario: 建会话成功后打开绑定标签
+
+- **GIVEN** 工作区能探测到 gitInfo（分支 `main`）
+- **WHEN** 用户触发「新建会话」
+- **THEN** 插件以 `thread/start` 建会话，随后发出 `thread/metadata/update`（参数含 `threadId` 与该 gitInfo）与 `thread/resume`
+- **AND** 子进程退出后，以 `vscode.openWith` 打开 `openai-codex://route/local/<id>`，viewType 为 `chatgpt.conversationEditor`，`preview` 为 `false`
+
+#### Scenario: 非 git 工作区仍然建会话并打开绑定标签
+
+- **GIVEN** 工作区不是 git 仓库（探测不到任何真实 gitInfo 字段）
+- **WHEN** 用户触发「新建会话」
+- **THEN** 插件照常执行 `thread/start` → `thread/metadata/update` → `thread/resume`，其中 `gitInfo` 为 `{sha: '0000000000000000000000000000000000000000'}`（全零占位，保证 app-server 的「至少一个字段」与落盘都成立）
+- **AND** 以 `vscode.openWith` 打开 `openai-codex://route/local/<id>`，而不是空白面板
+
+#### Scenario: 建会话任一步失败时回退空白面板
+
+- **GIVEN** `thread/start` 或 `thread/resume` 返回错误
+- **WHEN** 用户触发「新建会话」
+- **THEN** 插件回退打开 `/extension/panel/new`（带新 nonce）
+
+#### Scenario: 建会话失败时回退空白面板且不报错
+
+- **GIVEN** `thread/start` 返回错误
+- **WHEN** 用户触发「新建会话」
+- **THEN** 插件回退打开 `/extension/panel/new`（带新 nonce）
+- **AND** 不展示错误消息（不打断用户）
+
+#### Scenario: 落盘后必须等子进程退出才打开标签
+
+- **GIVEN** 一次性子进程已经完成 `thread/resume`，但进程尚未退出
+- **WHEN** 建会话流程结束
+- **THEN** 插件先等待该子进程退出（上限 2 秒），再调用 `vscode.openWith` 打开标签
+
+### Requirement: 标题停在 Codex 默认值的标签在点击那一行时重载
+
+Codex 只在 `resolveCustomEditor` 那一刻写标签标题，而 VS Code 没有「原地重新解析」的能力（Codex 的自定义编辑器 `supportsMultipleEditorsPerDocument: false` ⇒ 同一 resource 再 resolve 只会返回已开着的编辑器）。因此插件 SHALL 只在**用户点击侧边栏上那一行**时修正标题：该行的会话已经有打开的标签、且该标签的标题仍是 Codex 默认值（`Codex`）时，SHALL 关掉它并**用它自己的 resource** 重新打开（让 Codex 重新 resolve 并自己写标题），然后把它放回原来的栏与组内位置。标签标题已经不是默认值时 SHALL NOT 重载（只聚焦）；重载失败 SHALL 退化为聚焦/打开，不得让这一行点不开。插件 SHALL NOT 在后台自动重载标签——那会在用户正在别处干活时闪一下。
+
+重开 SHALL 带 `viewColumn`（标签原来那一栏），并在重开后把它放回原来的组内下标；该动作 SHALL 只在「当前激活的正是刚打开那个标签」时执行（照错标签会把用户的标签挪走），命令不可用或身份核对不过时 SHALL 静默跳过（位置不还原，标题修正不受影响）。
+
+#### Scenario: 点这一行就把标题还停在 Codex 的标签重载一次
+
+- **GIVEN** 会话 `t1` 的标签标题为 `Codex`，它在第 2 栏、组内第 2 格（下标 1）
+- **WHEN** 用户点击侧边栏上 `t1` 那一行
+- **THEN** 插件先关闭该标签，再用该标签自己的 resource 打开它（带 `viewColumn` 为第 2 栏）
+- **AND** 重开后发一次 `moveActiveEditor`，参数为 `{to:'position', by:'tab', value: 原下标 + 1}`（该命令 1 基）
+- **AND** 不再额外聚焦一次该标签（重开后它就是激活标签）
+
+#### Scenario: 标题已经正确的标签点开时只聚焦
+
+- **GIVEN** 会话 `t1` 的标签标题已是 `修复登录超时`
+- **WHEN** 用户点击 `t1` 那一行
+- **THEN** 插件不关闭该标签，只用该标签自己的 resource 聚焦它
+
+#### Scenario: 重载失败也照样把这一行打开
+
+- **GIVEN** 会话 `t1` 的标签标题为 `Codex`，但关闭该标签或重新打开它失败了
+- **WHEN** 用户点击 `t1` 那一行
+- **THEN** 插件退化为聚焦/打开该标签自己的 resource（重载失败不吞掉这次点击）
+- **AND** 报告重载失败的原因，但不改变「这一行能点开」这个结果
+
+#### Scenario: 会话没有打开的标签时按会话 id 打开
+
+- **GIVEN** 会话 `t1` 当前没有任何打开的标签
+- **WHEN** 用户点击 `t1` 那一行
+- **THEN** 插件按会话 id 打开标签（新开的标签本来就由 Codex 自己写标题），不做重载
+
+### Requirement: 新建会话出现后自动进入侧边栏
+
+空会话不出现在 `thread/list` 里，所以在面板里发出第一条消息之前，新建的会话不会出现在侧边栏，也没有事件通知插件。插件 SHALL 在成功建出会话之后盯住列表（默认每 3 秒一次、最多 10 分钟，标签被关掉就提前放弃）：只要还在等的会话里有一个出现在列表里 SHALL 刷新侧边栏。该轮询 SHALL NOT 带搜索过滤（用户开着过滤不代表会话没出现），并在无事可等时停止。
+
+#### Scenario: 新会话出现后自动刷新侧边栏
+
+- **GIVEN** 用户点了 `+`，插件建出会话 `t1` 并打开了它的标签
+- **AND** `t1` 还没出现在 `thread/list` 里
+- **WHEN** 用户在面板里发出第一条消息，`t1` 出现在列表里
+- **THEN** 插件在下一拍轮询里发现它，并刷新侧边栏，`t1` 这行出现（用户不需要手动刷新）
+
+#### Scenario: 建完就关掉标签不再等
+
+- **GIVEN** 新建的会话 `t1` 的标签已被用户关掉，且它还没进列表
+- **WHEN** 轮询下一拍执行
+- **THEN** 插件放弃等待（不再拉列表、不再轮询）
+
+#### Scenario: 超过等待上限就放弃
+
+- **GIVEN** 新建的会话 `t1` 一直没有出现在 `thread/list` 里，而它的标签还开着
+- **WHEN** 等满上限（10 分钟）
+- **THEN** 插件不再为 `t1` 轮询（不刷新、不拉列表）
+
+#### Scenario: 拉列表失败不算「等到了」，下一拍接着试
+
+- **GIVEN** 插件正在等 `t1` 进列表
+- **WHEN** 这一拍拉取会话列表失败（app-server 忙/重启中）
+- **THEN** 插件保持等待，下一拍继续
+
+#### Scenario: 多个会话同时在等时按各自的进度处理
+
+- **GIVEN** 插件同时在等 `t1` 与 `t2` 进列表
+- **WHEN** 这一拍只有 `t2` 出现在列表里
+- **THEN** 插件刷新一次侧边栏，并继续等 `t1`
+
+### Requirement: 已打开标签识别（只认已绑定会话的标签）
+
+插件 SHALL 从 VS Code 标签页状态中识别出属于 Codex 会话编辑器的标签，解析其会话 id，并保留该标签页自己的 resource —— 后者是「聚焦这个已打开的标签」唯一可靠的凭据。解析不出会话 id 的标签（尚未绑定会话的新面板）SHALL 被忽略，SHALL NOT 以任何合成身份进入后续链路。
+
+#### Scenario: 识别 Codex 会话标签并解析 id
+
+- **GIVEN** 一个标签的 input 是 custom 编辑器，viewType 为 `chatgpt.conversationEditor`，uri 为 `openai-codex://route/local/01a0becc-10ff-7a00-8574-923d5b93bae0`
+- **WHEN** 调用 `scanCodexTabs`
+- **THEN** 结果含一项，其 `conversationId` 为 `01a0becc-10ff-7a00-8574-923d5b93bae0`
+
+#### Scenario: 忽略非 Codex 标签
+
+- **GIVEN** 标签集合中含一个普通文本编辑器标签和一个 viewType 为 `other.editor` 的 custom 标签
+- **WHEN** 调用 `scanCodexTabs`
+- **THEN** 结果为空数组
+
+#### Scenario: 尚未绑定会话的新面板标签被忽略
+
+- **GIVEN** 标签集合中有一个 Codex custom 标签，其 uri 为 `openai-codex://route/extension/panel/new?newPanel=n1`
+- **WHEN** 调用 `scanCodexTabs`
+- **THEN** 结果为空数组（该标签不产生任何条目，也不产生任何合成 id）
+
+#### Scenario: 保留每个标签页自己的 resource（含 query 与 scheme 差异）
+
+- **GIVEN** 已打开标签中有两个 Codex custom 标签，一个的 uri 为 `openai-codex://route/local/conv-1?projectId=p1`，另一个的 uri 为 `openai-codex://route/remote/conv-r`
+- **WHEN** 调用 `scanCodexTabs`
+- **THEN** 结果中两项各自的 `uri` 分别等于这两个标签自己的 uri（path 与 query 原样保留，不被裁剪、不被重拼）
+
+### Requirement: 会话置顶与取消置顶后的归位
+
+插件 SHALL 把置顶的会话 id 持久化在插件自身的全局状态中，并让置顶会话排在列表前部。置顶会话 SHALL NOT 因为该会话被打开而从「置顶」分组移除；取消置顶后该会话 SHALL 按最近度归入「最近」或「历史」分组（无论它是否开着标签）。
+
+#### Scenario: 置顶后写入全局状态
+
+- **GIVEN** 全局状态中 `codexHelper.pinnedSessionIds` 为空
+- **WHEN** 对会话 `t1` 执行置顶
+- **THEN** 全局状态中 `codexHelper.pinnedSessionIds` 为 `['t1']`
+- **AND** 再次对 `t1` 执行置顶后仍为 `['t1']`（幂等，不产生重复项）
+
+#### Scenario: 取消置顶后从全局状态移除
+
+- **GIVEN** 全局状态中 `codexHelper.pinnedSessionIds` 为 `['t1','t2']`
+- **WHEN** 对会话 `t1` 执行取消置顶
+- **THEN** 全局状态中 `codexHelper.pinnedSessionIds` 为 `['t2']`
+
+#### Scenario: 首次读取时全局状态为空值
+
+- **GIVEN** 全局状态中不存在 `codexHelper.pinnedSessionIds` 键
+- **WHEN** 调用 `list()`
+- **THEN** 返回空数组而不是抛错
+
+#### Scenario: 取消置顶的已打开会话按最近度归位
+
+- **GIVEN** 会话 `a` 既被置顶又已经在标签页里打开，且它是未置顶会话里最近更新的一个
+- **WHEN** 对 `a` 执行取消置顶并重新构建树数据
+- **THEN** 「置顶」组不再含 `a`
+- **AND** `a` 出现在「最近」组，且该行仍带「已打开」标记（它有标签 resource）
+
+### Requirement: 树视图分组、状态标识与过滤
+
+侧边栏 SHALL 把会话分为「置顶」「最近」「历史」「已归档」四组展示，并支持按关键词过滤。一个会话 SHALL 只在树中出现一行，归属按以下优先级唯一确定：已归档的会话归「已归档」组；其余会话中置顶的归「置顶」组；再其余中 `updatedAt` 最大的 10 个归「最近」组；剩下的归「历史」组。尚未绑定会话的新面板标签 SHALL NOT 出现在任何分组里。条目的节点 id SHALL 为 `session:<分组>:<会话id>`，且「已归档」组中条目的 `contextValue` SHALL 为 `session.archived`（其余组沿用 `session` / `session.open` / `session.pinned`）。条目 SHALL 以图标呈现状态：运行中的会话用运行图标，已经在标签页里打开的会话用「已打开」图标，其余用普通图标（即运行中优先级高于已打开）。已打开的条目 SHALL 把该标签自己的 resource 一并交给打开命令。条目的描述文本 SHALL 呈现该会话所在目录的**末级目录名**，并在会话被置顶时以 `📌` 作为前缀；会话没有目录信息时，描述文本 SHALL 不含目录部分。「置顶」与「最近」分组 SHALL 默认展开，「历史」与「已归档」分组 SHALL 默认折叠。
 
 #### Scenario: 三组分别归位
 
-- **GIVEN** 会话 `a` 有对应的已打开标签、会话 `b` 被置顶、会话 `c` 两者都不是
+- **GIVEN** 会话 `a` 被置顶、会话 `b` 未置顶且最近更新、会话 `c` 未置顶且很早更新
+- **WHEN** 构建树数据（会话总数超过 10）
+- **THEN** `a` 在「置顶」组、`b` 在「最近」组、`c` 在「历史」组
+
+#### Scenario: 已归档的会话只出现在已归档分组
+
+- **GIVEN** `thread/list`（`archived: false`）返回会话 `b`、`c`，`thread/list`（`archived: true`）返回会话 `z`（`z` 的 `updatedAt` 最大并已被置顶）
 - **WHEN** 构建树数据
-- **THEN** `a` 在「已打开」组、`b` 在「置顶」组、`c` 在「历史」组
+- **THEN** `z` 出现在「已归档」组
+- **AND** 「置顶」「最近」「历史」三组都不含 `z`
 
-#### Scenario: 置顶会话被打开后仍保留在置顶组
+#### Scenario: 置顶的已归档会话仍在已归档分组且带置顶标识
 
-- **GIVEN** 会话 `a` 既被置顶又有已打开的标签
+- **GIVEN** 已归档会话 `z` 同时被置顶
+- **WHEN** 请求 `z` 的 TreeItem
+- **THEN** 其 `description` 以 `📌` 开头
+- **AND** 其 `contextValue` 为 `session.archived`
+
+#### Scenario: 最近分组只取最近更新的 10 个未置顶会话
+
+- **GIVEN** `thread/list` 返回 12 个未置顶会话，`updatedAt` 依次为 120、119、…、109
 - **WHEN** 构建树数据
-- **THEN** 「已打开」组含 `a`，「置顶」组同样含 `a`
-- **AND** 「历史」组不含 `a`
+- **THEN** 「最近」组恰好含 `updatedAt` 最大的 10 个（120…111），按更新时间倒序排列
+- **AND** 「历史」组含剩下的 2 个（110、109）
 
-#### Scenario: 同一会话在两组中的树节点 id 不同
+#### Scenario: 未置顶会话不足 10 个时最近分组全收
 
-- **GIVEN** 会话 `a` 同时出现在「已打开」与「置顶」两组
-- **WHEN** 请求这两个条目的 TreeItem
-- **THEN** 两者的 `id` 分别为 `session:open:a` 与 `session:pinned:a`，互不相同
+- **GIVEN** `thread/list` 返回 3 个未置顶会话
+- **WHEN** 构建树数据
+- **THEN** 3 个全部在「最近」组
+- **AND** 结果中不含「历史」分组节点
+
+#### Scenario: 置顶的会话不出现在最近分组
+
+- **GIVEN** 会话 `a` 既被置顶又是未置顶会话里最近更新的一个
+- **WHEN** 构建树数据
+- **THEN** 「置顶」组含 `a`
+- **AND** 「最近」组不含 `a`
+
+#### Scenario: 最近与历史互斥
+
+- **GIVEN** `thread/list` 返回 12 个未置顶会话
+- **WHEN** 构建树数据
+- **THEN** 没有任何会话同时出现在「最近」与「历史」两组
+
+#### Scenario: 已打开的会话出现在最近或历史分组
+
+- **GIVEN** 会话 `b` 未置顶且最近更新，且有对应的已打开标签
+- **WHEN** 构建树数据
+- **THEN** `b` 出现在「最近」组，其 `open` 为 `true`
+- **AND** 树中没有任何名为「已打开」的分组节点
+
+#### Scenario: 尚未绑定会话的新面板不产生任何条目
+
+- **GIVEN** 已打开标签只有一个未绑定会话的新面板标签（`conversationId` 为 `null`）
+- **AND** `thread/list` 返回两条会话 `b`、`c`
+- **WHEN** 构建树数据
+- **THEN** 结果中不含任何来自该标签的条目
+- **AND** 「最近」组含 `b` 与 `c`
+
+#### Scenario: 置顶会话被打开后仍保留在置顶组且只有一行
+
+- **GIVEN** 会话 `a` 既被置顶又已经在标签页里打开
+- **WHEN** 构建树数据
+- **THEN** 「置顶」组含 `a`，其余两组不含 `a`
+- **AND** 树中 `a` 只出现一次
+
+#### Scenario: 条目节点 id 含分组段
+
+- **GIVEN** 会话 `a` 被置顶
+- **WHEN** 请求 `a` 的 TreeItem
+- **THEN** 其 `id` 为 `session:pinned:a`
+
+#### Scenario: 已打开条目把标签 resource 交给打开命令
+
+- **GIVEN** 会话 `b` 未置顶，其标签 resource 为 `openai-codex://route/local/b`
+- **WHEN** 请求 `b` 的 TreeItem
+- **THEN** 其 `command.arguments` 内携带该标签的 resource
+- **AND** 未打开的会话（没有标签）该字段为 `null`
 
 #### Scenario: 运行中的条目使用运行图标
 
 - **GIVEN** 会话 `a` 在运行集合中，会话 `b` 不在
 - **WHEN** 请求两者的 TreeItem
 - **THEN** `a` 的图标 id 为 `loading~spin`
-- **AND** `b` 的图标 id 仍为原有的 `window`（已打开）或 `comment-discussion`（未打开）
+- **AND** `b` 的图标 id 为原有的 `window`（已打开）或 `comment-discussion`（未打开）
+
+#### Scenario: 开着且正在运行的会话显示运行图标
+
+- **GIVEN** 会话 `a` 既有已打开的标签，又在运行集合中
+- **WHEN** 请求 `a` 的 TreeItem
+- **THEN** 其图标 id 为 `loading~spin`（运行中优先于已打开）
 
 #### Scenario: 置顶的条目显示置顶标识
 
@@ -431,7 +654,7 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 
 #### Scenario: 没有目录信息的会话不显示描述
 
-- **GIVEN** 有一个已打开的 Codex 标签对应会话 `t8`，且 `thread/list` 返回的列表中不含 `t8`（因此其 `cwd` 为 `null`）
+- **GIVEN** 会话 `t8` 的 `cwd` 为 `null`（`thread/list` 未返回该信息）
 - **WHEN** 请求 `t8` 的 TreeItem
 - **THEN** 其 `description` 为空
 - **AND** 若 `t8` 同时被置顶，则其 `description` 恰为 `📌`，末尾不带多余空白
@@ -439,14 +662,14 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 #### Scenario: 已打开且已置顶的条目右键菜单给出取消置顶
 
 - **GIVEN** 会话 `a` 既被置顶又有已打开的标签
-- **WHEN** 构建「已打开」组中 `a` 的条目
+- **WHEN** 构建 `a` 的条目
 - **THEN** 其 `contextValue` 为 `session.pinned`（对应「取消置顶」菜单项），而不是 `session.open`
 
 #### Scenario: 空分组不渲染分组节点
 
-- **GIVEN** 没有任何已打开的 Codex 标签，且没有置顶会话
+- **GIVEN** 没有任何置顶会话，且 `thread/list` 返回空列表
 - **WHEN** 构建树数据
-- **THEN** 结果中不含「已打开」与「置顶」分组节点
+- **THEN** 结果中不含任何分组节点
 
 #### Scenario: 关键词过滤只保留匹配项
 
@@ -464,16 +687,15 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 #### Scenario: 置顶的会话已从服务端消失时不显示幽灵条目
 
 - **GIVEN** 全局状态中置顶了会话 `t9`
-- **AND** `thread/list` 返回的列表中不含 `t9`，且没有任何标签页对应 `t9`
+- **AND** `thread/list` 返回的列表中不含 `t9`
 - **WHEN** 构建树数据
 - **THEN** 结果中不含 `t9` 的任何条目
 
-#### Scenario: 已打开但不在服务端列表中的会话仍然显示
+#### Scenario: 已打开但服务端列表里没有的会话不渲染
 
-- **GIVEN** 有一个已打开的 Codex 标签对应会话 `t8`
-- **AND** `thread/list` 返回的列表中不含 `t8`
+- **GIVEN** 有一个已打开的 Codex 标签对应会话 `t8`，而 `thread/list` 返回的列表中不含 `t8`
 - **WHEN** 构建树数据
-- **THEN** `t8` 出现在「已打开」组，其显示标题取自该标签页的标题
+- **THEN** 结果中不含 `t8` 的任何条目（标题与目录都来自服务端数据，侧边栏不再用标签标题兜底造行）
 
 #### Scenario: 运行状态随会话数据一起传递给条目
 
@@ -481,15 +703,17 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 - **WHEN** 构建完成
 - **THEN** 会话 `a` 的 `running` 为 `true`，其余会话的 `running` 为 `false`
 
-#### Scenario: 已打开与置顶分组默认展开
+#### Scenario: 置顶与最近分组默认展开历史与已归档分组默认折叠
 
-- **GIVEN** 构建结果同时含「已打开」「置顶」「历史」三个分组
+- **GIVEN** 构建结果同时含「置顶」「最近」「历史」三个分组
 - **WHEN** 请求各分组节点的 TreeItem
-- **THEN** 「已打开」与「置顶」分组的 `collapsibleState` 为 `Expanded`，「历史」分组的 `collapsibleState` 为 `Collapsed`
+- **THEN** 「置顶」与「最近」分组的 `collapsibleState` 为 `Expanded`，「历史」分组的 `collapsibleState` 为 `Collapsed`
 
-### Requirement: 新建会话（每次点击独立面板）
+### Requirement: 新建会话（每次点击独立面板，不进侧边栏）
 
 插件 SHALL 提供一个「新建会话」命令，每次执行都通过 `vscode.openWith` 打开 Codex 的 new-thread-panel 路由（`openai-codex://route/extension/panel/new`）并携带一个**本次调用独有**的 `newPanel` query，使连续多次执行各自打开一个独立标签页；创建失败时 SHALL 提示错误，且 SHALL NOT 把异常抛回命令层。插件 SHALL NOT 再通过 `chatgpt.newCodexPanel` 委派新建——该入口固定使用同一个 resource，在 `supportsMultipleEditorsPerDocument: false` 下无法开出第二个标签。
+
+该面板在绑定会话之前 SHALL NOT 出现在侧边栏的任何分组里（见「树视图分组、状态标识与过滤」）；这是为「侧边栏只列会话」付出的代价，用户仍可在编辑器标签栏里找到它。
 
 本命令与「会话打开与聚焦」中「打开失败不得回退新建」不冲突：那条约束限定的是**打开既有会话失败**时的行为，本条是**用户显式发起**的新建入口。
 
@@ -514,15 +738,91 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 - **WHEN** 执行 `codexHelper.newSession`
 - **THEN** 向用户展示含该错误原因的错误消息，且命令本身不抛出异常
 
-#### Scenario: 尚未绑定会话的新建标签以未命名项出现在「已打开」组
+#### Scenario: 尚未绑定会话的新建面板不进侧边栏
 
-- **GIVEN** 已打开标签中有两个 `conversationId` 均为 `null` 的新建会话标签，标签标题均为 `New chat`
-- **AND** `thread/list` 返回的列表中不含这两个标签对应的会话
+- **GIVEN** 已打开标签中有一个 `conversationId` 为 `null` 的新建会话标签，标签标题为 `Codex`
+- **AND** `thread/list` 返回的列表中不含该标签对应的会话
 - **WHEN** 构建树数据
-- **THEN** 两个标签都出现在「已打开」组，显示标题取自各自标签页的标题，且两项使用互不相同的合成 id（不因 id 都为 `null` 而互相覆盖）
+- **THEN** 结果中不含该标签的任何条目（不产生「未命名」占位行，也不产生合成 id）
 
 #### Scenario: 带 query 的新面板 URI 不被误判为会话
 
 - **GIVEN** URI 为 `openai-codex://route/extension/panel/new?newPanel=n1`
 - **WHEN** 解析该 URI 的会话 id
-- **THEN** 得到 `null`（该标签在树上表现为未命名的新建项，而不是某个会话）
+- **THEN** 得到 `null`（该标签因此不会进入侧边栏）
+
+### Requirement: 侧边栏标题
+
+侧边栏标题 SHALL 由「活动栏容器标题」与「视图名」组成且重复词只出现一次：容器标题 SHALL 为 `Codex`，视图名 SHALL 为 `会话`。视图 SHALL NOT 声明 `contextualTitle` —— VS Code 会把容器标题与视图名/上下文标题一起渲染成 `<容器标题>: <视图名>` 形态，两段都写「会话」会让标题栏显示成 `CODEX 会话: 会话`。
+
+#### Scenario: 侧边栏标题不出现重复的「会话」
+
+- **GIVEN** 扩展清单 `package.json` 的 `contributes.viewsContainers.activitybar` 与 `contributes.views.codexHelper`
+- **WHEN** 读取该容器的 `title` 与其中视图的 `name` / `contextualTitle`
+- **THEN** 容器 `title` 为 `Codex`，视图 `name` 为 `会话`
+- **AND** 该视图未声明 `contextualTitle`
+- **AND** 把两者拼成标题栏文案（`Codex: 会话`）时「会话」只出现一次
+
+### Requirement: 会话归档与删除（先归档再删除）
+
+侧边栏 SHALL 用「先归档、再删除」两步表达删除意图：
+
+插件 SHALL 为**未归档**的会话条目提供「归档会话」悬停按钮（`view/item/context` 的 `inline` 组，图标 `$(archive)`），执行时直接调用 app-server 的 `thread/archive`（参数 `{threadId}`），SHALL NOT 请求用户确认（归档可逆）。插件 SHALL NOT 为未归档条目提供删除入口。
+
+插件 SHALL 为「已归档」分组中的条目提供「删除会话」悬停按钮（图标 `$(trash)`），执行时直接调用 `thread/delete`（参数 `{threadId}`），SHALL NOT 请求用户确认 —— 「必须先归档」本身就是防误删的那道闸，删除只对已归档会话开放。已归档条目 SHALL 另提供「取消归档」（`thread/unarchive`）入口，使归档可逆。
+
+三个命令成功后 SHALL 刷新侧边栏；失败时 SHALL 展示错误消息且不改变本地状态（不取消置顶、不关标签、不刷新）。插件 SHALL NOT 再为条目提供「打开会话」悬停按钮（点击条目本身即为打开，该命令保留在右键菜单中）。归档与取消归档 SHALL NOT 改动标签页；只有删除成功 SHALL 关闭显示该会话的标签页，其它标签 SHALL 不受影响。
+
+#### Scenario: 未归档条目提供归档按钮、已归档条目提供删除按钮
+
+- **GIVEN** 扩展清单 `package.json` 的 `contributes.menus["view/item/context"]`
+- **WHEN** 读取 `view == codexHelper.sessions` 下的会话条目贡献
+- **THEN** `codexHelper.archiveSession` 出现在未归档条目的 `inline` 组（图标 `$(archive)`）
+- **AND** `codexHelper.deleteSession` 只出现在 `session.archived` 条目的 `inline` 组（图标 `$(trash)`），不出现在未归档条目上
+- **AND** `codexHelper.openSession` 不出现在 `inline` 组，但仍出现在非 inline 的菜单组里
+
+#### Scenario: 归档不弹确认直接执行
+
+- **GIVEN** 未归档会话 `t1`
+- **WHEN** 点该条目的归档按钮
+- **THEN** 恰好发出一次 `thread/archive`，参数为 `{threadId: 't1'}`
+- **AND** 全程没有弹出任何警告/确认对话框
+
+#### Scenario: 删除已归档会话不弹确认直接执行
+
+- **GIVEN** 已归档会话 `t1`
+- **WHEN** 点该条目的删除按钮
+- **THEN** 恰好发出一次 `thread/delete`，参数为 `{threadId: 't1'}`
+- **AND** 全程没有弹出任何警告/确认对话框
+
+#### Scenario: 取消归档
+
+- **GIVEN** 已归档会话 `t1`
+- **WHEN** 执行取消归档
+- **THEN** 恰好发出一次 `thread/unarchive`，参数为 `{threadId: 't1'}`
+
+#### Scenario: 归档失败时报错且不改变本地状态
+
+- **GIVEN** `thread/archive` 返回 error
+- **WHEN** 归档会话 `t1`
+- **THEN** 向用户展示错误消息，且列表未刷新、没有标签被关闭
+
+#### Scenario: 删除失败时报错且不改变本地状态
+
+- **GIVEN** `thread/delete` 返回 error
+- **WHEN** 删除已归档会话 `t1`
+- **THEN** 向用户展示错误消息，且列表未刷新、没有标签被关闭
+
+#### Scenario: 归档与取消归档不改动标签页
+
+- **GIVEN** 会话 `t1` 正在标签页里打开
+- **WHEN** 归档 `t1` 成功，随后又取消归档成功
+- **THEN** 两次操作都没有关闭任何标签页
+- **AND** 两次操作都刷新了列表
+
+#### Scenario: 删除只关闭被删会话自己的标签
+
+- **GIVEN** 标签页里同时开着会话 `t1` 与 `t2`，且两者都已归档
+- **WHEN** 删除 `t1` 成功
+- **THEN** 只有 `t1` 的标签被关闭，`t2` 的标签保持打开
+- **AND** 列表刷新

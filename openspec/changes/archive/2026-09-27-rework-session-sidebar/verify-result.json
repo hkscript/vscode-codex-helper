@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "change": "rework-session-sidebar",
+  "head": "854f0ec257fa2d512d81be607309e25050cb9df4",
+  "fingerprint": "sha256:aa5ccb5ee0e2b22d03811d86c2d60628247805898db4b5ade9149e9be15dfae5",
+  "testRuns": [
+    {
+      "name": "full-suite: rtk pnpm test (vitest run)",
+      "exitCode": 0
+    },
+    {
+      "name": "typecheck: rtk pnpm typecheck (tsc --noEmit)",
+      "exitCode": 0
+    }
+  ],
+  "scenarioCoverage": {
+    "mapped": 56,
+    "total": 56
+  },
+  "designConsistency": {
+    "pass": true,
+    "blockers": []
+  },
+  "userConfirmation": {
+    "received": true
+  }
+}

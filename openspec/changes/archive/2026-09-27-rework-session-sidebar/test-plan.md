@@ -173,3 +173,19 @@ amend 追加「侧边栏标题」requirement（用户反馈：侧边栏标题栏
 - 单元测试：36
 - 集成测试：5（`test/unit/extension.test.ts`）
 - 测试文件数：10
+
+## 测试影响分析 (2026-09-27)
+
+amend 起因：verify 的改动点归属对账发现 design 改动点 4 的声明漂移——`defaultCollapsibleState`
+被标成「不随改」但实际随改（新增「已归档」组也要折叠），`toItemNode` 的归档优先 `contextValue`
+改动未被声明。本次**只同步 design 文档的声明**，不改任何 scenario 的预期行为，也不改代码与测试。
+
+| 测试编号 | 所属 Requirement | 影响 | 说明 |
+|----------|-----------------|------|------|
+| T-014~T-018、T-038、T-042 | 树视图分组、状态标识与过滤 | 无影响 | 它们断言的正是设计已要求的行为（`session:<分组>:<id>`、`tabUri` 透传、「已归档」默认折叠、`session.archived`）；代码与测试都没动 |
+| 其余 40 条 `T-*` / `INV-*` | — | 无影响 | 本次不触碰任何 requirement 文本 |
+| 新增 | — | 无 | 无新 scenario |
+| 废弃 | — | 无 | 无删除的 scenario |
+
+结论：**0 条需修改、0 条废弃、0 条新增**。test-plan 的 47 行选择器与状态后缀（`🔴 RED ✅ PASS`）
+**全部保留不动**——预期行为没变，RED 凭据仍然指向同一条断言，无需回 build 重走 Step 2。
