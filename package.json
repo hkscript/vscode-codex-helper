@@ -1,7 +1,7 @@
 {
   "name": "vscode-codex-helper",
   "displayName": "Codex Helper",
-  "description": "Browse, open, rename and pin Codex sessions from a sidebar tree view.",
+  "description": "Manage Codex sessions as editor tabs — split, drag and compare them side by side, with a sidebar tree for quick switching.",
   "version": "0.0.17",
   "publisher": "hkscript",
   "license": "MIT",
