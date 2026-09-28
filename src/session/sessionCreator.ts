@@ -48,6 +48,16 @@ export interface CreateBoundSessionOptions {
    * `PLACEHOLDER_GIT_INFO`。传 `null` 会直接放弃建会话（调用方应改用占位值）。
    */
   gitInfo: GitInfo | null;
+  /**
+   * 建出来就写进这个会话的思考级别（`thread/settings/update`）；`null` / 不传 = 不写。
+   *
+   * 为什么必须由建会话的人来写：面板打开新会话时读的就是**会话自己**的级别，而
+   * helper 建出来的会话默认是空的，面板只能退回它自己的兜底档（medium）。写进去之后
+   * 面板打开时就会显示这个级别（本机 probe 验证过：写进去的值会落到
+   * `threads.reasoning_effort` 与 rollout 的 `thread_settings_applied`，另一个进程 resume
+   * 也能读回来）。
+   */
+  reasoningEffort?: string | null;
 }
 
 export interface ExitableChild {
@@ -102,6 +112,20 @@ export async function createBoundSession(
     // 这一步才让 Codex 把 rollout 落盘；少了它，面板打开只会得到
     // 「no rollout found」/「Failed to resume chat」。
     await client.request('thread/resume', { threadId: id });
+
+    // 思考级别必须**在 resume 之后**写：只有加载起来的会话才吃得下这次设置更新
+    // （本机 probe：在 resume 之前发同样的请求不落盘，换个进程 resume 读回来还是 null）。
+    // 这一步是加分项，失败只让这个会话没有默认档，不该把已经建好的会话丢掉。
+    if (options.reasoningEffort) {
+      try {
+        await client.request('thread/settings/update', {
+          threadId: id,
+          effort: options.reasoningEffort,
+        });
+      } catch {
+        // 服务端不支持这个实验接口 / 级别不在模型支持列表里：保持静默，会话照常打开
+      }
+    }
     return id;
   } catch {
     return null;

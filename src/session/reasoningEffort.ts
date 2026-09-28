@@ -1,15 +1,12 @@
 /**
- * 「新建会话用哪个思考级别」的判断与同步。
+ * 「新建会话用哪个思考级别」的判断。
  *
- * 为什么是「写配置」而不是「给新会话设级别」（本机 probe 实测，不是文档承诺）：
- *  - `thread/start` 的 `config.model_reasoning_effort` 只在那一个进程内生效：换一个
- *    app-server 进程 resume 同一个会话，读回来的 `reasoningEffort` 还是 null；
- *  - 会话上真正落盘的级别（`threads.reasoning_effort` / rollout 的
- *    `thread_settings_applied`）只有面板自己发起回合（`turn/start` 带 `effort`）时才会写。
+ * 级别来源是 `thread/list`（按 updated_at 倒序）里最近一个非空 `reasoningEffort` ——
+ * 那就是用户最后一次真正用过的值。选出来的级别会交给 `createBoundSession`，由它在
+ * `thread/resume` 之后用 `thread/settings/update` 写进**新建的这个会话**（不是全局配置）。
  *
- * 所以能做到的是另一条路：把**上次用过的级别**写进 `~/.codex/config.toml` 的
- * `model_reasoning_effort`，让 Codex 自己新建草稿时读到它。级别来源是 `thread/list`
- * （按 updated_at 倒序）里最近一个非空 `reasoningEffort` —— 那就是用户最后一次选的值。
+ * 为什么不在 `thread/start` 的 `config` 里覆盖（本机 probe 实测，不是文档承诺）：
+ * 那个覆盖只在那一个进程内生效，换个 app-server 进程 resume 同一个会话读回来还是 null。
  */
 
 /** 设置 `codexHelper.newSessionReasoningEffort` 的两个特殊取值。 */
@@ -55,13 +52,13 @@ export function lastUsedReasoningEffort(
 }
 
 /**
- * 设置值 + 学到的级别 → 这次要写进配置的级别；`null` = 什么都不写。
+ * 设置值 + 学到的级别 → 这次要写进新会话的级别；`null` = 什么都不写。
  *
- *  - `off`：完全不干预（连列表都不读，见下面的同步函数）；
- *  - `remember` / 未设置：跟随上次用过的级别，学不到就不写；
+ *  - `off`：完全不干预（连列表都不读，见下面的解析函数）；
+ *  - `remember` / 未设置：跟随上次用过的级别，学不到就不带级别建会话；
  *  - 其它非空值：当成用户显式指定的级别，直接用它。
  */
-export function effortToWrite(
+export function effortToApply(
   setting: string | undefined | null,
   lastUsed: string | null,
 ): string | null {
@@ -71,24 +68,22 @@ export function effortToWrite(
   return value;
 }
 
-export interface NewSessionEffortSyncDeps {
+export interface NewSessionEffortDeps {
   /** `codexHelper.newSessionReasoningEffort` 的原始值（未设置时传 undefined）。 */
   setting: string | undefined | null;
   /** 拉一份按更新时间倒序的会话列表（生产里就是 `thread/list`）。 */
   listThreads(): Promise<ReadonlyArray<EffortBearingThread>>;
-  /** 真正落盘的一步；返回 false = 配置里已经就是这个值，没动文件。 */
-  writeEffort(effort: string): Promise<boolean>;
   log?(message: string): void;
 }
 
 /**
- * 建会话前的那一步：读设置 → 学上次级别 → 写配置。
+ * 建会话前的那一步：读设置 → 学上次级别 → 给出「要写进新会话的级别」。
  *
- * **任何失败都必须咽掉**并返回 null：写级别只是顺带的优化，它不能影响「新建会话」这条主流程。
- * 返回值是真正写进配置的级别（没写就是 null），调用方只拿来记日志。
+ * **任何失败都必须咽掉**并返回 null：级别只是顺带的优化，它不能影响「新建会话」这条主流程。
+ * 返回值直接交给 `createBoundSession` 的 `reasoningEffort`。
  */
-export async function syncNewSessionReasoningEffort(
-  deps: NewSessionEffortSyncDeps,
+export async function resolveNewSessionReasoningEffort(
+  deps: NewSessionEffortDeps,
 ): Promise<string | null> {
   const setting = typeof deps.setting === 'string' ? deps.setting.trim() : '';
   if (setting === EFFORT_SETTING_OFF) return null;
@@ -98,14 +93,12 @@ export async function syncNewSessionReasoningEffort(
       setting.length === 0 || setting === EFFORT_SETTING_REMEMBER
         ? lastUsedReasoningEffort(await deps.listThreads())
         : null;
-    const effort = effortToWrite(setting, lastUsed);
-    if (!effort) return null;
-    const written = await deps.writeEffort(effort);
-    if (written) deps.log?.(`已把新会话的思考级别同步为 ${effort}`);
-    return written ? effort : null;
+    const effort = effortToApply(setting, lastUsed);
+    if (effort) deps.log?.(`新会话将沿用思考级别 ${effort}`);
+    return effort;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    deps.log?.(`同步新会话思考级别失败（不影响新建会话）：${reason}`);
+    deps.log?.(`解析新会话思考级别失败（不影响新建会话）：${reason}`);
     return null;
   }
 }

@@ -11,7 +11,6 @@ import {
   type ChildProcessLike,
 } from './codex/appServerClient';
 import { CODEX_EXTENSION_ID, resolveCodexBinary } from './codex/binary';
-import { createConfigWriter } from './codex/configWriter';
 import { CODEX_CONVERSATION_VIEW_TYPE } from './codex/conversationUri';
 import { createNoRetryPatcher, createPatchOnOpen } from './codex/noRetryPatch';
 import { DEFAULT_PAGE_SIZE, createThreadApi } from './codex/threadApi';
@@ -25,7 +24,7 @@ import {
   registerCommands,
 } from './commands';
 import { createSessionOpener } from './session/opener';
-import { syncNewSessionReasoningEffort } from './session/reasoningEffort';
+import { resolveNewSessionReasoningEffort } from './session/reasoningEffort';
 import { createRowOpener } from './session/rowOpener';
 import { scanCodexTabs, selectTabsForConversation } from './session/openTabs';
 import { createPinStore } from './session/pinStore';
@@ -165,14 +164,16 @@ export function activate(context: vscode.ExtensionContext): void {
         name: CLIENT_NAME,
         version: String(context.extension.packageJSON.version),
       },
+      // `thread/settings/update`（把思考级别写进新建的会话）要求声明这个能力
+      experimentalApi: true,
       onStderrLine: (line: string) => console.log(`[codex app-server:new-session] ${line}`),
     });
 
     try {
-      // 建会话之前先把「上次用过的思考级别」同步进 Codex 的配置（`model_reasoning_effort`）：
-      // 面板自己新建草稿时会读这个默认值，这样通过 `+` 开出来的新会话不会每次都退回面板兜底的
-      // medium。每一步失败都在 syncNewSessionReasoningEffort 内部咽掉，不影响下面这条主流程。
-      await syncNewSessionReasoningEffort({
+      // 先学「上次用过的思考级别」，再把它写进新建的这个会话：面板打开时读到的就是它，
+      // 不会每次都退回面板自己的兜底档。学不到（或设置成 off）就照旧建一个没有级别的会话。
+      // 每一步失败都在 resolveNewSessionReasoningEffort 内部咽掉，不影响下面这条主流程。
+      const reasoningEffort = await resolveNewSessionReasoningEffort({
         setting: configuration().get<string>('newSessionReasoningEffort'),
         listThreads: async () =>
           (
@@ -180,12 +181,12 @@ export function activate(context: vscode.ExtensionContext): void {
               pageSize: configuration().get<number>('pageSize') ?? DEFAULT_PAGE_SIZE,
             }).listThreads({})
           ).data,
-        writeEffort: (effort) => createConfigWriter(oneShot).syncReasoningEffort(effort),
         log: (message) => console.log(`[codex app-server:new-session] ${message}`),
       });
       return await createBoundSession(oneShot, {
         cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,
         gitInfo,
+        reasoningEffort,
       });
     } finally {
       // 打开标签之前必须等它真的退出：锁没放开时 Codex 面板的 resume 会被拒。

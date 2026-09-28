@@ -208,7 +208,7 @@
             "max"
           ],
           "default": "remember",
-          "markdownDescription": "新建会话时同步的思考级别（写进 Codex 配置的 `model_reasoning_effort`）。`remember` = 跟随你上次用过的级别；`off` = 不干预；其余取值 = 固定用这个级别。"
+          "markdownDescription": "新建会话时用哪个思考级别。`remember` = 跟随你上次真正用过的级别（默认）；`off` = 不干预；其余取值 = 固定用这个级别。级别写在新建会话自己身上，不改全局配置。"
         }
       }
     }

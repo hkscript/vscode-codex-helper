@@ -242,50 +242,6 @@ describe('commands', () => {
     expect(showErrorMessage).not.toHaveBeenCalled();
   });
 
-  // REQ: 新建会话记忆思考级别 / Scenario: 建会话之前先把上次的级别写回配置
-  it('new_session_syncs_reasoning_effort_before_creating_the_session', async () => {
-    const { deps, createBoundSession } = makeNewSessionDeps();
-    const order: string[] = [];
-    createBoundSession.mockImplementation(async () => {
-      order.push('create');
-      return 'tid-sync';
-    });
-    const newSession = createNewSessionCommand({
-      ...deps,
-      syncReasoningEffort: async () => {
-        order.push('sync');
-      },
-    });
-
-    await newSession();
-
-    // 先按上次用过的级别把配置改好，再建会话：新会话一开出来就是那个级别
-    expect(order).toEqual(['sync', 'create']);
-  });
-
-  // REQ: 新建会话记忆思考级别 / Scenario: 写配置失败不打断新建会话
-  it('new_session_still_opens_when_the_effort_sync_fails', async () => {
-    const { deps, calls, createBoundSession, showErrorMessage } = makeNewSessionDeps();
-    createBoundSession.mockResolvedValue('tid-sync-failed');
-    const syncReasoningEffort = vi.fn(async () => {
-      throw new Error('config write exploded');
-    });
-    const newSession = createNewSessionCommand({
-      ...deps,
-      syncReasoningEffort,
-    });
-
-    await expect(newSession()).resolves.toBeUndefined();
-
-    // 写级别只是顺带做的好事，它失败不该让「新建会话」这个主流程退化
-    expect(syncReasoningEffort).toHaveBeenCalledTimes(1);
-    expect(executeOf(calls)).toEqual([
-      'vscode.openWith',
-      'openai-codex://route/local/tid-sync-failed?',
-    ]);
-    expect(showErrorMessage).not.toHaveBeenCalled();
-  });
-
   // REQ: 会话归档与删除 / Scenario: 归档不弹确认直接执行（命令层）
   it('archives_session_without_confirmation', async () => {
     const { deps, calls, showErrorMessage } = makeSessionActionDeps();

@@ -494,8 +494,8 @@ describe('extension', () => {
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
-  // REQ: 新建会话记忆思考级别 / Scenario: 新建会话把上次用过的级别写回配置（接线层）
-  it('new_session_writes_the_last_used_reasoning_effort_into_the_config', async () => {
+  // REQ: 新建会话记忆思考级别 / Scenario: 新建会话沿用上次用过的级别（接线层）
+  it('new_session_records_the_last_used_reasoning_effort_on_the_new_session', async () => {
     interceptTreeView();
     activate(makeContext() as never);
     answerGitInfo();
@@ -520,30 +520,23 @@ describe('extension', () => {
           nextCursor: null,
         },
       })),
-      ...(await answerChildRound(oneShot, { 'config/read': { config: { model_reasoning_effort: 'low' } } })),
-      ...(await answerChildRound(oneShot, { 'config/batchWrite': { status: 'ok' } })),
       ...(await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-effort' } } })),
       ...(await answerChildRound(oneShot, { 'thread/metadata/update': {} })),
       ...(await answerChildRound(oneShot, { 'thread/resume': {} })),
+      ...(await answerChildRound(oneShot, { 'thread/settings/update': {} })),
     ];
     await pending;
 
     expect(requests.map((request) => request.method)).toEqual([
       'initialize',
       'thread/list',
-      'config/read',
-      'config/batchWrite',
       'thread/start',
       'thread/metadata/update',
       'thread/resume',
+      'thread/settings/update',
     ]);
-    // 写配置必须走 app-server 自己的接口：它自己做 TOML 合并，config.toml 是软链也不会被换成普通文件
-    expect(requests[3]!.params).toEqual({
-      edits: [{ keyPath: 'model_reasoning_effort', value: 'high', mergeStrategy: 'upsert' }],
-      filePath: null,
-      expectedVersion: null,
-      reloadUserConfig: true,
-    });
+    // 级别写在这个会话自己身上（和面板自己保存级别走的是同一条路），不是全局配置
+    expect(requests[5]!.params).toEqual({ threadId: 'tid-effort', effort: 'high' });
   });
 
   // REQ: 新建会话 / Scenario: 非 git 工作区仍然建会话并打开绑定标签

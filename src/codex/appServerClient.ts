@@ -35,6 +35,12 @@ export interface AppServerClientOptions {
    * release bump only touches one file instead of every hard-coded literal.
    */
   clientInfo: { name: string; version: string };
+  /**
+   * 声明 `experimentalApi` 能力。只有它打开时，服务端才接受
+   * `thread/settings/update` 这类实验接口（本机 probe：不开时报
+   * `thread/settings/update requires experimentalApi capability`）。
+   */
+  experimentalApi?: boolean;
   onStderrLine?: (line: string) => void;
 }
 
@@ -171,7 +177,12 @@ export function createAppServerClient(options: AppServerClientOptions): AppServe
       spawned.on('exit', (code) => rejectAll(`app-server exited with code ${String(code)}`));
       spawned.on('error', (error) => rejectAll(`app-server failed: ${String(error)}`));
 
-      send<{ userAgent?: string }>('initialize', { clientInfo }).then(
+      send<{ userAgent?: string }>('initialize', {
+        clientInfo,
+        ...(options.experimentalApi
+          ? { capabilities: { experimentalApi: true, requestAttestation: false } }
+          : {}),
+      }).then(
         (result) => {
           initialized = true;
           resolve({ userAgent: result?.userAgent ?? null });

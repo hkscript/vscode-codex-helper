@@ -55,6 +55,27 @@ describe('appServerClient', () => {
     return expect(ready).resolves.toEqual({ userAgent: 'codex/0.0.0' });
   });
 
+  // REQ: 新建会话记忆思考级别 / Scenario: 需要 experimentalApi 能力
+  it('declares_the_experimental_api_capability_when_asked', () => {
+    const fake = createFakeSpawn();
+    const client = createAppServerClient({
+      binaryPath: '/ext/openai.chatgpt/bin/linux-x86_64/codex',
+      spawn: fake.spawn as never,
+      clientInfo: { name: CLIENT_NAME, version: '9.9.9' },
+      // `thread/settings/update` 是实验接口：不声明这个能力会被服务端直接拒
+      experimentalApi: true,
+    });
+
+    void client.start();
+    const first = JSON.parse(fake.children[0]!.written[0]!.trim());
+
+    expect(first.method).toBe('initialize');
+    expect(first.params).toEqual({
+      clientInfo: { name: CLIENT_NAME, version: '9.9.9' },
+      capabilities: { experimentalApi: true, requestAttestation: false },
+    });
+  });
+
   it('reassembles_message_split_across_chunks', async () => {
     const { client, child } = await started();
 

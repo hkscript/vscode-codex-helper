@@ -58,7 +58,7 @@ Codex 官方扩展（`openai.chatgpt`）把会话藏在面板内部，切换要�
 | `codexHelper.showRunningIndicator` | boolean | `true` | 显示运行中图标并监听 rollout 文件。 |
 | `codexHelper.runningStaleSeconds` | number | `300` | 运行状态过期阈值（秒），仅用于 macOS / Windows。 |
 | `codexHelper.runningPollSeconds` | number | `5` | 文件监听不可用时的兜底轮询间隔（秒），`0` 表示关闭。 |
-| `codexHelper.newSessionReasoningEffort` | string | `"remember"` | 新建会话时同步的思考级别：`remember` 跟随你上次用过的级别，`off` 不干预，其余取值（`minimal`/`low`/`medium`/`high`/`xhigh`/`max`）固定用该级别。同步走 Codex 自己的配置接口，写的是 `model_reasoning_effort`，会改动你的 `~/.codex/config.toml`（软链和注释都保留）；若面板没立刻生效，重载一次窗口。 |
+| `codexHelper.newSessionReasoningEffort` | string | `"remember"` | 新建会话用哪个思考级别：`remember` 跟随你上次真正用过的级别，`off` 不干预，其余取值（`minimal`/`low`/`medium`/`high`/`xhigh`/`max`）固定用该级别。级别通过 `thread/settings/update` 写在新建会话自己身上（`threads.reasoning_effort`），不改全局配置；写不进去时只是这个会话没有默认档，不影响新建。 |
 
 ## 工作原理
 

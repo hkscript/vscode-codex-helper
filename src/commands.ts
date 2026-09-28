@@ -124,25 +124,10 @@ export interface NewSessionCommandDeps {
    * 返回 `null`（此时回退空白面板）。这个依赖是流程里唯一会失败的部分，失败不打扰用户。
    */
   createBoundSession(): Promise<string | null>;
-  /**
-   * 建会话前先把「上次用过的思考级别」同步进 Codex 的配置
-   * （见 `src/session/reasoningEffort.ts`）。可选：不接线时跳过。
-   * 它**坏了也不能影响建会话**，所以命令层自己再兜一层 try/catch。
-   */
-  syncReasoningEffort?(): Promise<void>;
 }
 
 export function createNewSessionCommand(deps: NewSessionCommandDeps): () => Promise<void> {
   return async function newSession(): Promise<void> {
-    // 0) 先把上次用过的思考级别写回配置：Codex 自己新建草稿时会读这个默认值。
-    //    这一步是**顺带做的好事**（用户要的是"新会话别再退回 medium"），失败一律咽掉，
-    //    既不改流程也不弹错误提示。
-    try {
-      await deps.syncReasoningEffort?.();
-    } catch {
-      // 静默：同步级别失败不影响下面这条主流程
-    }
-
     // 1) 先试「直接建会话 → 开绑定标签」：标签从出生就绑定会话，标题由 Codex 自己写
     let boundId: string | null = null;
     try {

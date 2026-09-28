@@ -128,6 +128,57 @@ describe('sessionCreator', () => {
     await expect(createBoundSession(client, { cwd: '/repo', gitInfo })).resolves.toBeNull();
   });
 
+  // REQ: 新建会话记忆思考级别 / Scenario: resume 之后把级别写进这个会话
+  it('writes_the_reasoning_effort_after_resume', async () => {
+    const client = makeClient((method) =>
+      method === 'thread/start' ? { thread: { id: 'thread-7' } } : {},
+    );
+
+    await createBoundSession(client, { cwd: '/repo', gitInfo, reasoningEffort: 'high' });
+
+    // 顺序不能变：只有 resume 过的会话才吃得下设置更新（本机 probe：resume 之前发
+    // thread/settings/update 不落盘，换个进程读回来还是 null）
+    expect(client.calls.map((call) => call.method)).toEqual([
+      'initialize',
+      'thread/start',
+      'thread/metadata/update',
+      'thread/resume',
+      'thread/settings/update',
+    ]);
+    expect(client.calls[4]!.params).toEqual({ threadId: 'thread-7', effort: 'high' });
+  });
+
+  // REQ: 新建会话记忆思考级别 / Scenario: 没有级别时不多发一次请求
+  it('skips_the_effort_update_when_no_effort_is_given', async () => {
+    const client = makeClient((method) =>
+      method === 'thread/start' ? { thread: { id: 'thread-8' } } : {},
+    );
+
+    await createBoundSession(client, { cwd: '/repo', gitInfo });
+
+    expect(client.calls.map((call) => call.method)).toEqual([
+      'initialize',
+      'thread/start',
+      'thread/metadata/update',
+      'thread/resume',
+    ]);
+  });
+
+  // REQ: 新建会话记忆思考级别 / Scenario: 写级别失败也要把会话交出去
+  it('still_returns_the_id_when_the_effort_update_fails', async () => {
+    const client = makeClient((method) => {
+      if (method === 'thread/settings/update') {
+        throw new Error('thread/settings/update requires experimentalApi capability');
+      }
+      return method === 'thread/start' ? { thread: { id: 'thread-9' } } : {};
+    });
+
+    // 级别是加分项：写不进去只是这个会话没有默认档，不该让「新建会话」整个失败
+    await expect(
+      createBoundSession(client, { cwd: '/repo', gitInfo, reasoningEffort: 'low' }),
+    ).resolves.toBe('thread-9');
+  });
+
   // REQ: 新建会话 / Scenario: 落盘后必须等子进程退出才打开标签
   it('waits_for_child_exit_and_gives_up_after_timeout', async () => {
     const exiting = createFakeChildProcess();
