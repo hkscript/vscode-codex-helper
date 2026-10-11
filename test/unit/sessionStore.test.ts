@@ -372,6 +372,34 @@ describe('sessionStore', () => {
     expect(labelOf('named')).toBe('价格排查');
   });
 
+  // REQ: 会话列表标签 / Scenario: mention 链接只显示标签，不带 SKILL.md 路径
+  it('strips_mention_link_targets_in_session_label', () => {
+    const groups = buildSessionGroups({
+      threads: [
+        makeThread({
+          id: 'skill',
+          name: null,
+          preview:
+            '[$openflow](/home/hk/.agents/skills/openflow/SKILL.md) 价格/成本变动 会更新历史datekey吗',
+          updatedAt: 2,
+        }),
+        makeThread({
+          id: 'named-skill',
+          name: '[$review-agent](/home/hk/.codex/skills/review-agent/SKILL.md) review 一下',
+          preview: '不该出现',
+          updatedAt: 1,
+        }),
+      ],
+      openTabs: [],
+      pinnedIds: [],
+    });
+
+    const labelOf = (id: string) => rows(groups).find((session) => session.id === id)!.label;
+
+    expect(labelOf('skill')).toBe('[$openflow] 价格/成本变动 会更新历史datekey吗');
+    expect(labelOf('named-skill')).toBe('[$review-agent] review 一下');
+  });
+
   it('drops_pinned_session_that_no_longer_exists', () => {
     const groups = buildSessionGroups({
       threads: manyThreads(2),

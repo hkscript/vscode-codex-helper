@@ -50,12 +50,23 @@ export function matchesFilter(
 
 export function sessionItemLabel(thread: Thread | undefined, fallbackLabel?: string | null): string {
   const name = thread?.name?.trim();
-  if (name) return name;
+  if (name) return stripMentionTargets(name);
   const preview = thread?.preview?.trim();
-  if (preview) return preview;
+  if (preview) return stripMentionTargets(preview);
   const fallback = fallbackLabel?.trim();
-  if (fallback) return fallback;
+  if (fallback) return stripMentionTargets(fallback);
   return thread?.id ?? '';
+}
+
+/**
+ * 会话列表展示用：把 mention 链接 `[label](target)` 里的 `(target)` 去掉，只留 `[label]`。
+ *
+ * 技能/插件 mention 会把 SKILL.md 的绝对路径塞进 target
+ * （如 `[$openflow](/home/hk/.agents/skills/openflow/SKILL.md)`），原样展示又长又没信息量。
+ * 只处理带路径（target 含 `/`）的链接，避免误伤普通 `[文字](说明)`。
+ */
+export function stripMentionTargets(text: string): string {
+  return text.replace(/\[([^\]\n]+)\]\s*\(([^)\n]*\/[^)\n]*)\)/g, '[$1]');
 }
 
 export function buildSessionGroups(input: BuildSessionGroupsInput): SessionGroup[] {
