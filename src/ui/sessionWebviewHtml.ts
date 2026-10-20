@@ -99,16 +99,14 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   .filter-btn {
     display: inline-flex;
     align-items: center;
-    gap: 1px;
     height: 24px;
-    padding: 0 2px;
+    padding: 0 5px;
     border-radius: 4px;
     background: transparent;
   }
   .filter-btn:hover { background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, .2)); }
   .filter-btn.active { color: var(--vscode-focusBorder); }
   .filter-btn svg { width: 14px; height: 14px; }
-  .filter-caret { font-size: 8px; opacity: .75; }
   .chip {
     display: inline-flex;
     align-items: center;
@@ -329,7 +327,6 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   <div class="toolbar">
     <button id="cwd-filter" class="filter-btn" title="按工作目录过滤" aria-label="按工作目录过滤">
       <span id="cwd-filter-icon"></span>
-      <span class="filter-caret" aria-hidden="true">▾</span>
     </button>
     <span id="cwd-chip" class="chip hidden">
       <span>过滤</span>
