@@ -304,6 +304,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   }
   .tooltip-text {
     display: block;
+    line-height: 18px;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
