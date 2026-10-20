@@ -44,7 +44,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     cursor: pointer;
   }
   .hidden { display: none !important; }
-  .top { padding: 8px 10px 2px; }
+  .top { padding: 8px 6px 2px; }
   .new-session {
     display: flex;
     align-items: center;
@@ -59,7 +59,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     display: flex;
     align-items: center;
     gap: 6px;
-    margin: 4px 10px 6px;
+    margin: 4px 6px 6px;
     padding: 0 6px;
     border: 1px solid var(--vscode-input-border, transparent);
     border-radius: 4px;
@@ -91,13 +91,13 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     display: inline-flex;
     align-items: center;
     height: 24px;
-    padding: 0 5px;
+    padding: 0 4px;
     border-radius: 4px;
     background: transparent;
   }
   .filter-btn:hover { background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, .2)); }
   .filter-btn.active { color: var(--vscode-focusBorder); }
-  .filter-btn svg { width: 14px; height: 14px; }
+  .filter-btn svg { width: 16px; height: 16px; }
   .chip {
     display: inline-flex;
     align-items: center;
@@ -132,7 +132,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     align-items: center;
     gap: 6px;
     width: 100%;
-    padding: 5px 10px;
+    padding: 5px 6px;
     color: var(--vscode-descriptionForeground);
     font-size: 12px;
     font-weight: 600;
@@ -161,7 +161,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     align-items: center;
     gap: 8px;
     min-height: 30px;
-    padding: 4px 8px 4px 14px;
+    padding: 4px 6px;
     border-left: 2px solid transparent;
     outline: none;
     cursor: pointer;
@@ -249,8 +249,8 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   .menu-sep { height: 1px; margin: 4px 6px; background: var(--vscode-menu-separatorBackground, var(--vscode-widget-border)); }
   .load-more {
     display: block;
-    width: calc(100% - 20px);
-    margin: 4px 10px;
+    width: calc(100% - 12px);
+    margin: 4px 6px;
     padding: 5px;
     border-radius: 3px;
     color: var(--vscode-textLink-foreground);
