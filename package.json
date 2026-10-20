@@ -2,7 +2,7 @@
   "name": "vscode-codex-helper",
   "displayName": "Codex Helper",
   "description": "Manage Codex sessions as editor tabs — split, drag and compare them side by side, with a sidebar tree for quick switching.",
-  "version": "0.0.43",
+  "version": "0.0.44",
   "publisher": "hkscript",
   "license": "MIT",
   "icon": "resources/icon.png",

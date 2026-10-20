@@ -44,7 +44,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     cursor: pointer;
   }
   .hidden { display: none !important; }
-  .top { padding: 8px 6px 2px 0; }
+  .top { padding: 8px 0 2px; }
   .new-session {
     display: flex;
     align-items: center;
@@ -59,7 +59,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     display: flex;
     align-items: center;
     gap: 6px;
-    margin: 4px 6px 6px 0;
+    margin: 4px 0 6px;
     padding: 0 6px;
     border: 1px solid var(--vscode-input-border, transparent);
     border-radius: 4px;
@@ -132,7 +132,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     align-items: center;
     gap: 6px;
     width: 100%;
-    padding: 5px 6px 5px 0;
+    padding: 5px 0;
     color: var(--vscode-descriptionForeground);
     font-size: 12px;
     font-weight: 600;
@@ -161,7 +161,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     align-items: center;
     gap: 8px;
     min-height: 30px;
-    padding: 4px 6px 4px 0;
+    padding: 4px 0;
     border-left: 2px solid transparent;
     outline: none;
     cursor: pointer;
@@ -249,8 +249,8 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   .menu-sep { height: 1px; margin: 4px 6px; background: var(--vscode-menu-separatorBackground, var(--vscode-widget-border)); }
   .load-more {
     display: block;
-    width: calc(100% - 6px);
-    margin: 4px 6px 4px 0;
+    width: 100%;
+    margin: 4px 0;
     padding: 5px;
     border-radius: 3px;
     color: var(--vscode-textLink-foreground);
