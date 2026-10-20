@@ -451,12 +451,22 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
           return;
         }
 
-        // 未归档分页（置顶/最近/历史）的「加载更多」落在未归档分组之后、
-        // 已归档之前；已归档有自己独立的分页，单独放在最下面。
-        var unarchived = payload.groups.filter(function (group) { return group.id !== 'archived'; });
+        // 「最近」不显示组头，会话直接作为一级条目；置顶/历史/已归档仍保留分组。
+        // 未归档分页的「加载更多」落在历史之后、已归档之前。
+        var pinned = payload.groups.filter(function (group) { return group.id === 'pinned'; });
+        var recent = payload.groups.find(function (group) { return group.id === 'recent'; });
+        var history = payload.groups.filter(function (group) { return group.id === 'history'; });
         var archived = payload.groups.filter(function (group) { return group.id === 'archived'; });
-        for (var i = 0; i < unarchived.length; i += 1) {
-          list.appendChild(groupNode(unarchived[i]));
+        for (var i = 0; i < pinned.length; i += 1) {
+          list.appendChild(groupNode(pinned[i]));
+        }
+        if (recent) {
+          for (var r = 0; r < recent.sessions.length; r += 1) {
+            list.appendChild(sessionRow(recent.sessions[r]));
+          }
+        }
+        for (var h = 0; h < history.length; h += 1) {
+          list.appendChild(groupNode(history[h]));
         }
         if (!filtering && payload.hasMore) list.appendChild(loadMoreButton(false, '加载更多'));
         for (var j = 0; j < archived.length; j += 1) {
