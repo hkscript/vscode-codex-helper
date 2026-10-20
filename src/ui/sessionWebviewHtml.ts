@@ -80,27 +80,40 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   .toolbar {
     display: flex;
     align-items: center;
-    gap: 3px;
-    padding: 0 8px 5px;
+    gap: 6px;
+    padding: 1px 8px 7px;
     color: var(--vscode-descriptionForeground);
   }
   .icon-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
+    width: 28px;
+    height: 28px;
+    border-radius: 5px;
   }
   .icon-btn:hover { background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
   .icon-btn.active { color: var(--vscode-focusBorder); }
+  .toolbar svg { width: 16px; height: 16px; }
+  .filter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 28px;
+    padding: 0 7px;
+    border-radius: 5px;
+    background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, .12));
+  }
+  .filter-btn:hover { background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, .2)); }
+  .filter-btn.active { color: var(--vscode-focusBorder); }
+  .filter-caret { margin-top: 1px; font-size: 9px; opacity: .85; }
   .active {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    margin: 0 4px;
+    gap: 5px;
+    margin: 0 2px;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: 12.5px;
   }
   .active .value { color: var(--vscode-foreground); }
   .chip-row { padding: 0 10px 5px; }
@@ -137,7 +150,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     text-align: left;
   }
   .group-head:hover { background: var(--vscode-list-hoverBackground); }
-  .chevron { width: 12px; flex: none; text-align: center; font-size: 10px; }
+  .chevron { width: 13px; flex: none; text-align: center; font-size: 11px; }
   .group-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count {
     flex: none;
@@ -166,7 +179,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   }
   .row:hover, .row:focus { background: var(--vscode-list-hoverBackground); }
   .row:focus { border-left-color: var(--vscode-focusBorder); }
-  .dot { flex: none; width: 12px; color: var(--vscode-descriptionForeground); font-size: 9px; text-align: center; }
+  .dot { flex: none; width: 13px; color: var(--vscode-descriptionForeground); font-size: 10px; text-align: center; }
   .dot.running { color: var(--vscode-charts-green, #89d185); animation: pulse 1.2s ease-in-out infinite; }
   .dot.open { color: var(--vscode-focusBorder); }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
@@ -320,7 +333,10 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   </div>
 
   <div class="toolbar">
-    <button id="cwd-filter" class="icon-btn" title="按工作目录过滤" aria-label="按工作目录过滤"></button>
+    <button id="cwd-filter" class="filter-btn" title="按工作目录过滤" aria-label="按工作目录过滤">
+      <span id="cwd-filter-icon"></span>
+      <span class="filter-caret" aria-hidden="true">▾</span>
+    </button>
     <span class="active">
       <span id="active-icon"></span>
       <span>Active · <span id="active-count" class="value">0</span></span>
@@ -851,7 +867,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
       appendIcon(el('new-session-icon'), 'plus');
       appendIcon(el('search-icon'), 'search');
       appendIcon(el('clear-search'), 'close');
-      appendIcon(el('cwd-filter'), 'filter');
+      appendIcon(el('cwd-filter-icon'), 'filter');
       appendIcon(el('active-icon'), 'bolt');
       appendIcon(el('cwd-chip-clear'), 'close');
 
