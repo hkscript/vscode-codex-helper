@@ -287,12 +287,13 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     user-select: none;
   }
   .tooltip-section {
-    display: block;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
   }
   .tooltip-section + .tooltip-section { margin-top: 8px; }
   .tooltip-label {
-    display: inline-block;
-    margin-bottom: 2px;
+    flex: none;
     padding: 0 7px;
     border-radius: 9px;
     background: var(--vscode-activityBarBadge-background, #0e639c);
@@ -303,6 +304,8 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     white-space: nowrap;
   }
   .tooltip-text {
+    flex: 1;
+    min-width: 0;
     display: -webkit-box;
     overflow: hidden;
     white-space: pre-wrap;
