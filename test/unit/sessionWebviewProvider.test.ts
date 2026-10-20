@@ -105,7 +105,7 @@ describe('sessionWebviewProvider', () => {
     const { view, lastRender } = await resolvedProvider();
 
     expect(view.webview.html).toContain('Search sessions...');
-    expect(view.webview.html).toContain('Active');
+    expect(view.webview.html).not.toContain('Active ·');
     const payload = lastRender()!;
     expect(payload.activeCount).toBe(1);
     expect(payload.cwds).toEqual([

@@ -81,6 +81,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     display: flex;
     align-items: center;
     gap: 6px;
+    min-width: 0;
     padding: 1px 8px 7px;
     color: var(--vscode-descriptionForeground);
   }
@@ -107,28 +108,24 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   .filter-btn:hover { background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, .2)); }
   .filter-btn.active { color: var(--vscode-focusBorder); }
   .filter-caret { margin-top: 1px; font-size: 9px; opacity: .85; }
-  .active {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    margin: 0 2px;
-    white-space: nowrap;
-    font-size: 12.5px;
-  }
-  .active .value { color: var(--vscode-foreground); }
-  .chip-row { padding: 0 10px 5px; }
   .chip {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    max-width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
     padding: 2px 8px;
     border-radius: 10px;
     background: var(--vscode-badge-background);
     color: var(--vscode-badge-foreground);
     font-size: 11px;
   }
-  .chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .chip button { display: inline-flex; opacity: .8; }
   .chip button:hover { opacity: 1; }
   .list {
@@ -337,14 +334,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
       <span id="cwd-filter-icon"></span>
       <span class="filter-caret" aria-hidden="true">▾</span>
     </button>
-    <span class="active">
-      <span id="active-icon"></span>
-      <span>Active · <span id="active-count" class="value">0</span></span>
-    </span>
-  </div>
-
-  <div id="cwd-chip" class="chip-row hidden">
-    <span class="chip">
+    <span id="cwd-chip" class="chip hidden">
       <span>过滤</span>
       <span id="cwd-chip-label" class="chip-label"></span>
       <button id="cwd-chip-clear" title="清除目录过滤" aria-label="清除目录过滤"></button>
@@ -387,7 +377,6 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
         plus: 'M8 2.5v11M2.5 8h11',
         search: 'M7 12.2a5.2 5.2 0 1 0 0-10.4 5.2 5.2 0 0 0 0 10.4Zm3.8-1.4 3 3',
         filter: 'M2.5 3.5h11L9 8.7v3.4l-2 .9V8.7L2.5 3.5Z',
-        bolt: 'M9.2 1.8 3.6 9h3.5l-1 5.2L12.4 7H8.9l.3-5.2Z',
         close: 'M3.5 3.5l9 9m0-9-9 9'
       };
 
@@ -405,7 +394,6 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
         hidePreview();
         if (document.activeElement !== el('search')) el('search').value = payload.filter || '';
         el('clear-search').classList.toggle('hidden', !(payload.filter || '').length);
-        el('active-count').textContent = String(payload.activeCount || 0);
         el('cwd-filter').classList.toggle('active', (payload.cwdFilter || []).length > 0);
         renderCwdChip(payload);
         renderList(payload);
@@ -868,7 +856,6 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
       appendIcon(el('search-icon'), 'search');
       appendIcon(el('clear-search'), 'close');
       appendIcon(el('cwd-filter-icon'), 'filter');
-      appendIcon(el('active-icon'), 'bolt');
       appendIcon(el('cwd-chip-clear'), 'close');
 
       el('new-session').onclick = function () { post({ type: 'newSession' }); };
