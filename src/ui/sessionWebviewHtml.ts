@@ -644,6 +644,8 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
       }
 
       function schedulePreview(session, row) {
+        // 右键菜单打开期间不要弹悬停摘要，避免两个浮层叠在一起
+        if (!el('ctx-menu').classList.contains('hidden')) return;
         if (hoverTimer) clearTimeout(hoverTimer);
         el('session-tooltip').classList.add('hidden');
         hoverRow = row;
@@ -756,6 +758,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
       }
 
       function showContextMenu(session, anchor) {
+        hidePreview();
         ctxSession = session;
         var menu = el('ctx-menu');
         clear(menu);
