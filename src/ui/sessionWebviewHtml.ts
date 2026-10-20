@@ -287,13 +287,12 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     user-select: none;
   }
   .tooltip-section {
-    display: flex;
-    align-items: flex-start;
-    gap: 6px;
+    display: flow-root;
   }
   .tooltip-section + .tooltip-section { margin-top: 8px; }
   .tooltip-label {
-    flex: none;
+    float: left;
+    margin: 0 6px 0 0;
     padding: 0 7px;
     border-radius: 9px;
     background: var(--vscode-activityBarBadge-background, #0e639c);
@@ -304,14 +303,9 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     white-space: nowrap;
   }
   .tooltip-text {
-    flex: 1;
-    min-width: 0;
-    display: -webkit-box;
-    overflow: hidden;
+    display: block;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 5;
   }
   .tooltip-empty { color: var(--vscode-descriptionForeground); }
 </style>
@@ -718,7 +712,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
         var text = document.createElement('span');
         text.className = 'tooltip-text';
         var content = String(value || '');
-        text.textContent = content.length > 800 ? content.slice(0, 797) + '…' : content;
+        text.textContent = content.length > 400 ? content.slice(0, 397) + '…' : content;
         section.appendChild(tag);
         section.appendChild(text);
         tip.appendChild(section);
