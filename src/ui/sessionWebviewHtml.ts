@@ -171,17 +171,13 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     align-items: center;
     gap: 8px;
     min-height: 30px;
-    padding: 4px 8px 4px 26px;
+    padding: 4px 8px 4px 14px;
     border-left: 2px solid transparent;
     outline: none;
     cursor: pointer;
   }
   .row:hover, .row:focus { background: var(--vscode-list-hoverBackground); }
   .row:focus { border-left-color: var(--vscode-focusBorder); }
-  .dot { flex: none; width: 13px; color: var(--vscode-descriptionForeground); font-size: 10px; text-align: center; }
-  .dot.running { color: var(--vscode-charts-green, #89d185); animation: pulse 1.2s ease-in-out infinite; }
-  .dot.open { color: var(--vscode-focusBorder); }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
   .row-title {
     flex: 1;
     min-width: 0;
@@ -588,10 +584,6 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
         row.setAttribute('aria-label', session.label || session.id);
         row.dataset.sessionId = session.id;
 
-        var dot = document.createElement('span');
-        dot.className = 'dot' + (session.running ? ' running' : session.open ? ' open' : '');
-        dot.textContent = '●';
-
         var title = document.createElement('span');
         title.className = 'row-title';
         if (session.pinned) {
@@ -617,7 +609,6 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
           showContextMenu(session, more);
         };
 
-        row.appendChild(dot);
         row.appendChild(title);
         row.appendChild(time);
         row.appendChild(more);
