@@ -99,15 +99,16 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   .filter-btn {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
-    height: 28px;
-    padding: 0 7px;
+    gap: 2px;
+    height: 26px;
+    padding: 0 6px;
     border-radius: 5px;
     background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, .12));
   }
   .filter-btn:hover { background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, .2)); }
   .filter-btn.active { color: var(--vscode-focusBorder); }
-  .filter-caret { margin-top: 1px; font-size: 9px; opacity: .85; }
+  .filter-btn svg { width: 15px; height: 15px; }
+  .filter-caret { font-size: 10px; opacity: .85; }
   .chip {
     display: inline-flex;
     align-items: center;
