@@ -58,9 +58,9 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   .search-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     margin: 4px 0 6px;
-    padding: 0 6px;
+    padding: 0 4px 0 6px;
     border: 1px solid var(--vscode-input-border, transparent);
     border-radius: 4px;
     background: var(--vscode-input-background);
@@ -90,8 +90,8 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   .filter-btn {
     display: inline-flex;
     align-items: center;
-    height: 24px;
-    padding: 0 4px;
+    height: 22px;
+    padding: 0 2px;
     border-radius: 4px;
     background: transparent;
   }
