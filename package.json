@@ -2,7 +2,7 @@
   "name": "vscode-codex-helper",
   "displayName": "Codex Helper",
   "description": "Manage Codex sessions as editor tabs — split, drag and compare them side by side, with a sidebar tree for quick switching.",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "publisher": "hkscript",
   "license": "MIT",
   "icon": "resources/icon.png",
@@ -31,7 +31,8 @@
         {
           "id": "codexHelper.sessions",
           "name": "会话",
-          "icon": "resources/codex.svg"
+          "icon": "resources/codex.svg",
+          "type": "webview"
         }
       ]
     },
@@ -102,53 +103,6 @@
           "command": "codexHelper.refresh",
           "when": "view == codexHelper.sessions",
           "group": "navigation@1"
-        },
-        {
-          "command": "codexHelper.setFilter",
-          "when": "view == codexHelper.sessions",
-          "group": "navigation@2"
-        },
-        {
-          "command": "codexHelper.clearFilter",
-          "when": "view == codexHelper.sessions",
-          "group": "navigation@3"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "codexHelper.archiveSession",
-          "when": "view == codexHelper.sessions && viewItem =~ /^session/ && viewItem != session.archived",
-          "group": "inline@1"
-        },
-        {
-          "command": "codexHelper.deleteSession",
-          "when": "view == codexHelper.sessions && viewItem == session.archived",
-          "group": "inline@2"
-        },
-        {
-          "command": "codexHelper.openSession",
-          "when": "view == codexHelper.sessions && viewItem =~ /^session/",
-          "group": "1_modification@0"
-        },
-        {
-          "command": "codexHelper.unarchiveSession",
-          "when": "view == codexHelper.sessions && viewItem == session.archived",
-          "group": "1_modification@1"
-        },
-        {
-          "command": "codexHelper.renameSession",
-          "when": "view == codexHelper.sessions && viewItem =~ /^session/",
-          "group": "1_modification@2"
-        },
-        {
-          "command": "codexHelper.pinSession",
-          "when": "view == codexHelper.sessions && viewItem =~ /^session$/ || viewItem == session.open",
-          "group": "1_modification@3"
-        },
-        {
-          "command": "codexHelper.unpinSession",
-          "when": "view == codexHelper.sessions && viewItem == session.pinned",
-          "group": "1_modification@4"
         }
       ]
     },

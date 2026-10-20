@@ -45,6 +45,17 @@ describe('threadApi', () => {
     expect((requests[1]!.params as { limit: number }).limit).toBe(5);
   });
 
+  it('normalizes_unix_second_timestamps_to_milliseconds', async () => {
+    const { client } = makeClient();
+    const api = createThreadApi(client);
+
+    // Codex 返回秒级 updated_at；界面按毫秒算相对时间，不换算会显示成 56y
+    const page = await api.listThreads();
+
+    expect(page.data[0]!.updatedAt).toBe(300_000);
+    expect(page.data[0]!.createdAt).toBe(1_000);
+  });
+
   // REQ: 会话归档与删除 / Scenario: 删除已归档会话不弹确认直接执行（app-server 层）
   it('sends_thread_delete_with_thread_id', async () => {
     const { client, requests } = makeClient();
@@ -117,6 +128,24 @@ describe('threadApi', () => {
     await api.listThreads({ cursor: 'c2' });
 
     expect(requests[0]!.params).toMatchObject({ cursor: 'c2' });
+  });
+
+  it('lists_thread_items_with_direction_and_cursor', async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const client = {
+      request<T>(method: string, params?: unknown): Promise<T> {
+        requests.push({ method, params });
+        return Promise.resolve({ data: [], nextCursor: null } as T);
+      },
+    };
+    const api = createThreadApi(client);
+
+    await api.listItems({ threadId: 't1', limit: 50, sortDirection: 'desc', cursor: 'c1' });
+
+    expect(requests[0]).toEqual({
+      method: 'thread/items/list',
+      params: { threadId: 't1', limit: 50, sortDirection: 'desc', cursor: 'c1' },
+    });
   });
 
   it('list_turns_requests_latest_turn_in_descending_order', async () => {

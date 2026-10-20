@@ -37,6 +37,8 @@ export interface BuildSessionGroupsInput {
   pinnedIds: string[];
   runningIds?: Iterable<string> | null;
   filter?: string | null;
+  /** 只保留工作目录在这些路径里的会话；空数组 = 不限目录。 */
+  cwdFilter?: ReadonlyArray<string> | null;
 }
 
 export function matchesFilter(
@@ -70,8 +72,11 @@ export function stripMentionTargets(text: string): string {
 }
 
 export function buildSessionGroups(input: BuildSessionGroupsInput): SessionGroup[] {
-  const threads = input.threads ?? [];
-  const archivedThreads = input.archivedThreads ?? [];
+  const cwdFilter = input.cwdFilter ?? [];
+  const cwdSet = new Set(cwdFilter);
+  const inCwd = (thread: Thread): boolean => cwdSet.size === 0 || cwdSet.has(thread.cwd);
+  const threads = (input.threads ?? []).filter(inCwd);
+  const archivedThreads = (input.archivedThreads ?? []).filter(inCwd);
   const openTabs = input.openTabs ?? [];
   const pinnedIds = input.pinnedIds ?? [];
   const filter = input.filter ?? null;

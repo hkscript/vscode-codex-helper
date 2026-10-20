@@ -14,7 +14,7 @@ import { CODEX_EXTENSION_ID, resolveCodexBinary } from './codex/binary';
 import { CODEX_CONVERSATION_VIEW_TYPE } from './codex/conversationUri';
 import { createNoRetryPatcher, createPatchOnOpen } from './codex/noRetryPatch';
 import { DEFAULT_PAGE_SIZE, createThreadApi } from './codex/threadApi';
-import type { SessionGroup, Thread, UriLike } from './codex/types';
+import type { Thread, ThreadItemRecord, UriLike } from './codex/types';
 import {
   createArchiveSessionCommand,
   createDeleteSessionCommand,
@@ -31,7 +31,6 @@ import { createPinStore } from './session/pinStore';
 import { createNewSessionWatch, type NewSessionWatch } from './session/newSessionWatch';
 import { scanHeldRollouts } from './session/processScan';
 import { createRunningTracker, type RunningTracker } from './session/runningTracker';
-import { buildSessionGroups } from './session/sessionStore';
 import {
   PLACEHOLDER_GIT_INFO,
   createBoundSession,
@@ -39,15 +38,24 @@ import {
   type ExitableChild,
   type GitInfo,
 } from './session/sessionCreator';
+import {
+  agentMessageText,
+  buildSessionPreview,
+  userMessageText,
+  type SessionPreview,
+} from './session/sessionPreview';
 import { CODEX_DEFAULT_TAB_TITLE, resourceKey } from './session/tabTitleSync';
 import { createWriterLockProbe } from './session/writerLock';
-import { createSessionTreeProvider } from './ui/treeProvider';
+import { createSessionWebviewProvider } from './ui/sessionWebviewProvider';
 
 let appServer: AppServerClient | undefined;
 let autoRefresh: ReturnType<typeof setInterval> | undefined;
 let runningTracker: RunningTracker | undefined;
 /** 等新建会话进列表的轮询；模块级是为了让 `deactivate()` 能回收（同 autoRefresh）。 */
 let newSessionWatch: NewSessionWatch | undefined;
+
+/** workspaceState 里记住上次勾选的目录（按 VS Code workspace 隔离）。 */
+const CWD_FILTER_KEY = 'codexHelper.cwdFilter';
 
 /** `vscode.git` 的导出形状（只用到仓库 HEAD 与远端地址两处）。 */
 interface GitRepositoryLike {
@@ -77,9 +85,17 @@ function labelOf(node: unknown): string {
 
 export function activate(context: vscode.ExtensionContext): void {
   const pinStore = createPinStore(context.globalState);
-  let filter: string | null = null;
   let threads: Thread[] = [];
+  let archivedThreads: Thread[] = [];
   let cursor: string | null = null;
+  let archivedCursor: string | null = null;
+
+  function savedCwdFilter(): string[] {
+    const raw = context.workspaceState.get<unknown>(CWD_FILTER_KEY);
+    return Array.isArray(raw)
+      ? raw.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+      : [];
+  }
 
   const configuration = () => vscode.workspace.getConfiguration('codexHelper');
 
@@ -322,38 +338,143 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
-  async function load(): Promise<SessionGroup[]> {
-    // 两批会话并行拉：未归档（置顶/最近/历史）与已归档（「已归档」分组 —— 它同时是
-    // 删除入口与撤销归档的地方）。两次请求共用同一个 app-server 握手（start 是幂等的）。
+  /**
+   * 两批会话并行拉：未归档（置顶/最近/历史）与已归档（「已归档」分组 —— 它同时是
+   * 删除入口与撤销归档的地方）。两次请求共用同一个 app-server 握手（start 是幂等的）。
+   *
+   * 这里只负责取数据；过滤是侧边栏本地做的，所以输入搜索词不会触发往返请求。
+   */
+  async function fetchSessions(): Promise<void> {
     const [page, archivedPage] = await Promise.all([
-      api().listThreads({
-        searchTerm: filter,
-        cwd: workspaceCwd(),
-        cursor: null,
-      }),
-      api().listThreads({
-        searchTerm: filter,
-        cwd: workspaceCwd(),
-        archived: true,
-      }),
+      api().listThreads({ cwd: workspaceCwd(), cursor: null }),
+      api().listThreads({ cwd: workspaceCwd(), archived: true }),
     ]);
-    threads = page.data;
-    cursor = page.nextCursor;
+    threads = page.data ?? [];
+    archivedThreads = archivedPage.data ?? [];
+    cursor = page.nextCursor ?? null;
+    archivedCursor = archivedPage.nextCursor ?? null;
     // 喂最新的线程列表。tracker 只在运行集合真的变化时才回调（D23），
     // 所以这条 refresh → load → update → refresh 的回环一轮就收敛。
     tracker?.update(threads);
-    const groups = buildSessionGroups({
+  }
+
+  /** 过滤时用：把未归档与已归档的剩余分页都拉完，过滤覆盖全部会话。 */
+  async function loadAllSessions(): Promise<void> {
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      const page = await api().listThreads({ cwd: workspaceCwd(), cursor });
+      threads = [...threads, ...(page.data ?? [])];
+      cursor = page.nextCursor ?? null;
+    }
+    const seenArchived = new Set<string>();
+    while (archivedCursor && !seenArchived.has(archivedCursor)) {
+      seenArchived.add(archivedCursor);
+      const page = await api().listThreads({
+        cwd: workspaceCwd(),
+        cursor: archivedCursor,
+        archived: true,
+      });
+      archivedThreads = [...archivedThreads, ...(page.data ?? [])];
+      archivedCursor = page.nextCursor ?? null;
+    }
+  }
+
+  async function collectItems(
+    threadId: string,
+    direction: 'asc' | 'desc',
+    done: (items: ThreadItemRecord[]) => boolean,
+  ): Promise<ThreadItemRecord[]> {
+    const items: ThreadItemRecord[] = [];
+    let cursor: string | null = null;
+    // 最多翻 5 页；正常会话首尾几屏就能找齐，避免异常游标无限翻
+    for (let page = 0; page < 5 && !done(items); page += 1) {
+      const response = await api().listItems({
+        threadId,
+        limit: 50,
+        sortDirection: direction,
+        cursor,
+      });
+      items.push(...(response.data ?? []));
+      cursor = response.nextCursor ?? null;
+      if (!cursor) break;
+    }
+    return items;
+  }
+
+  /**
+   * 悬停预览：前两次用户输入 + 最后一次用户输入 + 模型最后回复。
+   * 首尾并行拉；尾部扫描到 `final_answer` 为止，找不到最终答复则退回最后一条助手消息。
+   */
+  async function loadSessionPreview(threadId: string): Promise<SessionPreview> {
+    const [first, tail] = await Promise.all([
+      collectItems(
+        threadId,
+        'asc',
+        (items) => items.filter((item) => userMessageText(item)).length >= 2,
+      ),
+      collectItems(
+        threadId,
+        'desc',
+        (items) =>
+          items.some((item) => userMessageText(item)) &&
+          items.some(
+            (item) =>
+              item.item?.phase === 'final_answer' && agentMessageText(item) !== null,
+          ),
+      ),
+    ]);
+    return buildSessionPreview(first, tail);
+  }
+
+  const provider = createSessionWebviewProvider({
+    initialCwdFilter: savedCwdFilter(),
+    saveCwdFilter: async (next) => {
+      await context.workspaceState.update(CWD_FILTER_KEY, next);
+    },
+    fetch: fetchSessions,
+    loadAll: loadAllSessions,
+    loadPreview: loadSessionPreview,
+    snapshot: () => ({
       threads,
-      archivedThreads: archivedPage.data,
+      archivedThreads,
       openTabs: openTabs(),
       pinnedIds: pinStore.list(),
       runningIds: tracker?.snapshot() ?? null,
-      filter,
-    });
-    return groups;
-  }
-
-  const provider = createSessionTreeProvider({ load });
+      hasMore: cursor !== null,
+      archivedHasMore: archivedCursor !== null,
+    }),
+    loadMore: async (archived: boolean) => {
+      const next = archived ? archivedCursor : cursor;
+      if (!next) return;
+      const page = await api().listThreads({
+        cwd: workspaceCwd(),
+        cursor: next,
+        ...(archived ? { archived: true } : {}),
+      });
+      if (archived) {
+        archivedThreads = [...archivedThreads, ...(page.data ?? [])];
+        archivedCursor = page.nextCursor ?? null;
+      } else {
+        threads = [...threads, ...(page.data ?? [])];
+        cursor = page.nextCursor ?? null;
+      }
+      provider.refresh();
+    },
+    openSession: async (request) => {
+      // tabUri 不能从 webview 回传：postMessage 走结构化克隆，vscode.Uri 会变成普通对象，
+      // openWith 只认真正的 Uri 实例。这里按会话 id 现查一次已打开标签的 resource。
+      const tabUri = openTabs().find((tab) => tab.id === request.sessionId)?.uri ?? null;
+      await rowOpener({ ...request, tabUri });
+    },
+    newSession: () => newSessionWithProgress(),
+    renameSession: (sessionId, label) => renameById(sessionId, label),
+    pinSession: (sessionId) => pinById(sessionId),
+    unpinSession: (sessionId) => unpinById(sessionId),
+    archiveSession: (sessionId) => archiveById(sessionId),
+    unarchiveSession: (sessionId) => unarchiveById(sessionId),
+    deleteSession: (sessionId) => deleteById(sessionId),
+  });
 
   /**
    * 新建出来的会话要等面板里发出第一条消息才进 `thread/list`（空会话不落列表），而那一刻
@@ -361,13 +482,13 @@ export function activate(context: vscode.ExtensionContext): void {
    * 规则本身在 `newSessionWatch.ts` 里（纯逻辑 + 单测），这里只接真实的 IO 与定时器。
    */
   newSessionWatch = createNewSessionWatch({
-    // 不带 searchTerm：用户可能正开着过滤，那不能当成「这个会话还没出现」的证据
+    // 不带过滤：用户可能正开着搜索，那不能当成「这个会话还没出现」的证据
     listThreadIds: async () =>
       (await api().listThreads({ cwd: workspaceCwd(), cursor: null })).data.map(
         (thread) => thread.id,
       ),
     openTabIds: () => new Set(openTabs().map((tab) => tab.id)),
-    refresh: () => provider.refresh(),
+    refresh: () => void provider.reload(),
     now: () => Date.now(),
     setInterval: (fn, ms) => {
       const handle = setInterval(fn, ms);
@@ -393,9 +514,15 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     runningTracker = tracker;
   }
-  const view = vscode.window.createTreeView('codexHelper.sessions', {
-    treeDataProvider: provider as unknown as vscode.TreeDataProvider<unknown>,
+  /**
+   * 自定义 Webview 视图：内嵌搜索框、目录筛选和右侧相对时间都超出 TreeView 的能力，
+   * 但会话动作仍全部走扩展宿主里的命令。`retainContextWhenHidden` 让切走再回来时
+   * 搜索词、滚动位置和焦点都还在。
+   */
+  const view = vscode.window.registerWebviewViewProvider('codexHelper.sessions', provider, {
+    webviewOptions: { retainContextWhenHidden: true },
   });
+  console.log('[codex-helper] registered session webview provider');
 
   /**
    * 打开标签页时顺带确保 Codex 扩展的「不重试」补丁已打上（design D50）。
@@ -508,7 +635,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const rowOpener = createRowOpener({
     unarchive: async (threadId: string) => {
       const unarchived = await unarchiveSession({ sessionId: threadId });
-      if (unarchived) provider.refresh();
+      if (unarchived) await provider.reload();
       return unarchived;
     },
     revealTab: (uri) => opener.revealTab(uri),
@@ -517,86 +644,109 @@ export function activate(context: vscode.ExtensionContext): void {
     reloadUntitledTab,
   });
 
+  async function archiveById(sessionId: string): Promise<void> {
+    if (await archiveSession({ sessionId })) await provider.reload();
+  }
+
+  async function unarchiveById(sessionId: string): Promise<void> {
+    if (await unarchiveSession({ sessionId })) await provider.reload();
+  }
+
+  async function deleteById(sessionId: string): Promise<void> {
+    if (!(await deleteSession({ sessionId }))) return;
+    // 删除不可逆：清掉置顶状态（否则 globalState 里留着陈旧 id）
+    await pinStore.unpin(sessionId);
+    // 再关掉显示这个会话的标签：跨进程删除不会通知 Codex 那侧的 webview，
+    // 留着标签会让它继续 read/resume 一个已删除的会话（design D46）。
+    const doomed = tabsOfConversation(sessionId);
+    if (doomed.length > 0) {
+      await vscode.window.tabGroups.close(doomed as never);
+    }
+    await provider.reload();
+  }
+
+  async function renameById(sessionId: string, label: string): Promise<void> {
+    // 新名字只写回了 Codex（本地 `threads` 还是旧的），重新拉一次列表才会显示出来
+    if (await renameSession({ sessionId, label })) await provider.reload();
+  }
+
+  async function pinById(sessionId: string): Promise<void> {
+    await pinStore.pin(sessionId);
+    provider.refresh();
+  }
+
+  async function unpinById(sessionId: string): Promise<void> {
+    await pinStore.unpin(sessionId);
+    provider.refresh();
+  }
+
+  /**
+   * 建会话要先起一个一次性 app-server（实测约 1.2s，其中 metadata/update 占 0.8s），
+   * 这段时间没有任何界面反馈就会像卡死：给一个进度通知，做完自动消失。
+   */
+  function newSessionWithProgress(): Promise<void> {
+    return Promise.resolve(
+      vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: '正在创建 Codex 会话…' },
+        () => Promise.resolve(newSession()),
+      ),
+    );
+  }
+
   context.subscriptions.push(
     view,
     ...registerCommands({
-      refresh: () => provider.refresh(),
+      refresh: () => void provider.reload(),
       openSession: async (node) => {
         await rowOpener(node);
       },
       archiveSession: async (node) => {
         const id = sessionIdOf(node);
         if (!id) return;
-        if (await archiveSession({ sessionId: id })) provider.refresh();
+        await archiveById(id);
       },
       unarchiveSession: async (node) => {
         const id = sessionIdOf(node);
         if (!id) return;
-        if (await unarchiveSession({ sessionId: id })) provider.refresh();
+        await unarchiveById(id);
       },
       deleteSession: async (node) => {
         const id = sessionIdOf(node);
         if (!id) return;
-        if (!(await deleteSession({ sessionId: id }))) return;
-        // 删除不可逆：清掉置顶状态（否则 globalState 里留着陈旧 id）
-        await pinStore.unpin(id);
-        // 再关掉显示这个会话的标签：跨进程删除不会通知 Codex 那侧的 webview，
-        // 留着标签会让它继续 read/resume 一个已删除的会话（design D46）。
-        const doomed = tabsOfConversation(id);
-        if (doomed.length > 0) {
-          await vscode.window.tabGroups.close(doomed as never);
-        }
-        provider.refresh();
+        await deleteById(id);
       },
       renameSession: async (node) => {
         const sessionId = sessionIdOf(node);
         if (!sessionId) return;
-        // 新名字只写回了 Codex（本地 `threads` 还是旧的），刷一次列表才会显示出来
-        if (await renameSession({ sessionId, label: labelOf(node) })) provider.refresh();
+        await renameById(sessionId, labelOf(node));
       },
-      // 建会话要先起一个一次性 app-server（实测约 1.2s，其中 metadata/update 占 0.8s），
-      // 这段时间没有任何界面反馈就会像卡死：给一个进度通知，做完自动消失。
-      newSession: () =>
-        Promise.resolve(
-          vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Notification, title: '正在创建 Codex 会话…' },
-            () => Promise.resolve(newSession()),
-          ),
-        ),
+      newSession: newSessionWithProgress,
       pinSession: async (node) => {
         const id = sessionIdOf(node);
         if (!id) return;
-        await pinStore.pin(id);
-        provider.refresh();
+        await pinById(id);
       },
       unpinSession: async (node) => {
         const id = sessionIdOf(node);
         if (!id) return;
-        await pinStore.unpin(id);
-        provider.refresh();
+        await unpinById(id);
       },
       setFilter: async () => {
         const answer = await vscode.window.showInputBox({
           prompt: '按会话名或会话 id 过滤',
-          value: filter ?? '',
+          value: '',
         });
         if (answer === undefined) return;
-        filter = answer.trim().length > 0 ? answer.trim() : null;
-        provider.refresh();
+        provider.setFilter(answer.trim());
       },
       clearFilter: () => {
-        filter = null;
-        provider.refresh();
+        provider.clearFilters();
       },
       loadMore: async () => {
         if (!cursor) return;
-        const page = await api().listThreads({
-          searchTerm: filter,
-          cwd: workspaceCwd(),
-          cursor,
-        });
-        threads = [...threads, ...page.data];
-        cursor = page.nextCursor;
+        const page = await api().listThreads({ cwd: workspaceCwd(), cursor });
+        threads = [...threads, ...(page.data ?? [])];
+        cursor = page.nextCursor ?? null;
         provider.refresh();
       },
     }),
@@ -607,7 +757,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const seconds = configuration().get<number>('autoRefreshSeconds') ?? 0;
   if (seconds > 0) {
-    autoRefresh = setInterval(() => provider.refresh(), seconds * 1000);
+    autoRefresh = setInterval(() => void provider.reload(), seconds * 1000);
   }
 }
 

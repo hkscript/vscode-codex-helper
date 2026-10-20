@@ -1,4 +1,4 @@
-import type { ThreadListResponse, Turn } from './types';
+import type { ThreadItemsResponse, ThreadListResponse, Turn } from './types';
 
 /**
  * Typed wrapper over the three app-server thread methods we use.
@@ -20,6 +20,12 @@ export interface ThreadListQuery {
 
 export interface ThreadApi {
   listThreads(query?: ThreadListQuery): Promise<ThreadListResponse>;
+  listItems(query: {
+    threadId: string;
+    limit?: number;
+    sortDirection?: 'asc' | 'desc';
+    cursor?: string | null;
+  }): Promise<ThreadItemsResponse>;
   listLoadedThreadIds(): Promise<string[]>;
   setThreadName(threadId: string, name: string): Promise<void>;
   archiveThread(threadId: string): Promise<void>;
@@ -29,6 +35,15 @@ export interface ThreadApi {
 }
 
 export const DEFAULT_PAGE_SIZE = 50;
+
+/**
+ * Codex 的 `thread/list` 返回的是 Unix 秒；本扩展内部统一用毫秒，
+ * 否则相对时间会把 2026 年算成 1970 年（界面上的 `56y`）。
+ * 也容忍已经是毫秒的上游实现（大于 1e12 视为毫秒）。
+ */
+function toEpochMs(value: number): number {
+  return Number.isFinite(value) && Math.abs(value) < 1e12 ? value * 1000 : value;
+}
 
 export function createThreadApi(
   client: ThreadApiClient,
@@ -50,7 +65,25 @@ export function createThreadApi(
       if (query.searchTerm) params.searchTerm = query.searchTerm;
       if (query.cwd) params.cwd = query.cwd;
       if (query.cursor) params.cursor = query.cursor;
-      return client.request<ThreadListResponse>('thread/list', params);
+      const response = await client.request<ThreadListResponse>('thread/list', params);
+      return {
+        ...response,
+        data: (response.data ?? []).map((thread) => ({
+          ...thread,
+          createdAt: toEpochMs(thread.createdAt),
+          updatedAt: toEpochMs(thread.updatedAt),
+        })),
+      };
+    },
+
+    async listItems(query): Promise<ThreadItemsResponse> {
+      const params: Record<string, unknown> = {
+        threadId: query.threadId,
+        limit: query.limit ?? 50,
+      };
+      if (query.sortDirection) params.sortDirection = query.sortDirection;
+      if (query.cursor) params.cursor = query.cursor;
+      return client.request<ThreadItemsResponse>('thread/items/list', params);
     },
 
     async listLoadedThreadIds(): Promise<string[]> {

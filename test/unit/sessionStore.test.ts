@@ -354,6 +354,38 @@ describe('sessionStore', () => {
     expect(ids(byId, 'history')).toEqual(['t11']);
   });
 
+  it('cwd_filter_keeps_only_sessions_from_the_exact_directory', () => {
+    const groups = buildSessionGroups({
+      threads: [
+        makeThread({ id: 'a', cwd: '/work/alpha', updatedAt: 30 }),
+        makeThread({ id: 'b', cwd: '/work/beta', updatedAt: 20 }),
+        makeThread({ id: 'c', cwd: '/work/alpha', updatedAt: 10 }),
+      ],
+      archivedThreads: [makeThread({ id: 'z', cwd: '/work/beta', updatedAt: 5 })],
+      openTabs: [],
+      pinnedIds: ['b'],
+      cwdFilter: ['/work/alpha'],
+    });
+
+    // 目录过滤在分组之前生效：置顶的 beta 会话也必须消失，不能靠分组过滤补救
+    expect(rows(groups).map((session) => session.id)).toEqual(['a', 'c']);
+  });
+
+  it('cwd_filter_accepts_multiple_directories', () => {
+    const groups = buildSessionGroups({
+      threads: [
+        makeThread({ id: 'a', cwd: '/work/alpha', updatedAt: 30 }),
+        makeThread({ id: 'b', cwd: '/work/beta', updatedAt: 20 }),
+        makeThread({ id: 'c', cwd: '/work/gamma', updatedAt: 10 }),
+      ],
+      openTabs: [],
+      pinnedIds: [],
+      cwdFilter: ['/work/alpha', '/work/beta'],
+    });
+
+    expect(rows(groups).map((session) => session.id)).toEqual(['a', 'b']);
+  });
+
   it('falls_back_to_preview_when_name_is_null', () => {
     const groups = buildSessionGroups({
       threads: [

@@ -41,31 +41,68 @@ const uriApi = createFakeUriApi();
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 let refreshes = 0;
+let registeredProvider:
+  | {
+      resolveWebviewView(view: unknown): void;
+      onDidChange?: (listener: () => void) => unknown;
+    }
+  | undefined;
 
 /** `activate()` 需要的最小 ExtensionContext（只用到 globalState / subscriptions / 版本号）。 */
 function makeContext() {
   return {
     globalState: createFakeMemento(),
+    workspaceState: createFakeMemento(),
     subscriptions: [] as unknown[],
     extension: { packageJSON: { version: '0.0.0-test' } },
   };
 }
 
-/** 观察「列表刷新」：树视图注册的 onDidChangeTreeData 监听器被触发几次。 */
-function interceptTreeView(): void {
+/** 观察「列表刷新」：侧边栏 provider 注册的 onDidChange 监听器被触发几次。 */
+function interceptWebviewView(): void {
   (
-    vscode.window.createTreeView as unknown as { mockImplementation(fn: unknown): void }
+    vscode.window.registerWebviewViewProvider as unknown as {
+      mockImplementation(fn: unknown): void;
+    }
   ).mockImplementation(
     (
       _id: string,
-      options: { treeDataProvider: { onDidChangeTreeData?: (listener: () => void) => unknown } },
+      provider: {
+        resolveWebviewView(view: unknown): void;
+        onDidChange?: (listener: () => void) => unknown;
+      },
     ) => {
-      options.treeDataProvider.onDidChangeTreeData?.(() => {
+      registeredProvider = provider;
+      provider.onDidChange?.(() => {
         refreshes += 1;
       });
       return { dispose: vi.fn() };
     },
   );
+}
+
+/** 最小 WebviewView 假体：记录扩展发下来的消息，并允许测试反向发消息。 */
+function makeWebviewView() {
+  let receive: ((message: unknown) => void) | undefined;
+  const posted: unknown[] = [];
+  return {
+    posted,
+    webview: {
+      options: {} as Record<string, unknown>,
+      cspSource: 'vscode-webview://test',
+      html: '',
+      postMessage: async (message: unknown) => {
+        posted.push(message);
+        return true;
+      },
+      onDidReceiveMessage: (listener: (message: unknown) => void) => {
+        receive = listener;
+        return { dispose: () => undefined };
+      },
+    },
+    onDidDispose: () => ({ dispose: () => undefined }),
+    send: (message: unknown) => receive?.(message),
+  };
 }
 
 /** 取出 `activate()` 注册的某个命令处理器（接线测试的入口）。 */
@@ -137,11 +174,16 @@ async function runHandler(
   node: unknown,
   outcome: 'ok' | 'fail' = 'ok',
 ): Promise<unknown> {
-  const pending = handler(node);
-  await flush();
-  await answerAppServerRequests(outcome);
-  await flush();
-  await answerAppServerRequests(outcome);
+  let settled = false;
+  const pending = handler(node).finally(() => {
+    settled = true;
+  });
+  // 动作成功后命令会重新拉一次列表（归档/删除/重命名都要看到服务端的新状态），
+  // 所以回包轮数不固定：一直喂到处理器真的结束，最多留足 initialize + 动作 + 两批 list。
+  for (let round = 0; round < 8 && !settled; round += 1) {
+    await flush();
+    await answerAppServerRequests(outcome);
+  }
   return pending;
 }
 
@@ -218,6 +260,7 @@ describe('extension', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     refreshes = 0;
+    registeredProvider = undefined;
     heldRollouts.current = new Map();
     // 共享的 app-server client 是模块级单例，跨用例复用；这里只重置外部状态
     (vscode.workspace as { workspaceFolders?: unknown }).workspaceFolders = undefined;
@@ -234,7 +277,7 @@ describe('extension', () => {
 
   // REQ: 会话打开与聚焦 / Scenario: 已打开的会话按它自己的标签 resource 打开（接线层）
   it('open_session_command_prefers_the_tab_resource', async () => {
-    interceptTreeView();
+    interceptWebviewView();
     activate(makeContext() as never);
 
     const openSession = activatedHandler('codexHelper.openSession');
@@ -256,7 +299,7 @@ describe('extension', () => {
 
   // REQ: 未标题标签的标题同步 / Scenario: 点这一行就把标题还停在 Codex 的标签重载一次
   it('open_session_command_reloads_an_untitled_tab_in_place', async () => {
-    interceptTreeView();
+    interceptWebviewView();
     activate(makeContext() as never);
     const tab = makeTab('t9', 'Codex');
     const plain = { label: 'a.ts', input: { uri: uriApi.file('/tmp/a.ts') } };
@@ -291,7 +334,7 @@ describe('extension', () => {
 
   // REQ: 未标题标签的标题同步 / Scenario: 标题已经正确的标签只聚焦，不重载
   it('open_session_command_only_reveals_an_already_titled_tab', async () => {
-    interceptTreeView();
+    interceptWebviewView();
     activate(makeContext() as never);
     const tab = makeTab('t10', '修复登录超时');
     (vscode.window.tabGroups.all as unknown[]) = [{ viewColumn: 1, tabs: [tab] }];
@@ -314,9 +357,38 @@ describe('extension', () => {
     expect(calls.find((call) => call[0] === 'moveActiveEditor')).toBeUndefined();
   });
 
+  // Webview 回传的 session 里没有 tabUri（结构化克隆会把 vscode.Uri 变成普通对象），
+  // 扩展必须按会话 id 现查真正的标签 resource，否则 openWith 聚焦不到已打开的标签。
+  it('webview_open_resolves_the_live_tab_uri_instead_of_trusting_the_payload', async () => {
+    interceptWebviewView();
+    activate(makeContext() as never);
+    const tab = makeTab('t1', '会话 t1');
+    (vscode.window.tabGroups.all as unknown[]) = [{ viewColumn: 1, tabs: [tab] }];
+
+    const view = makeWebviewView();
+    registeredProvider!.resolveWebviewView(view as never);
+    await flush();
+    await answerListRequests([]);
+    await flush();
+
+    view.send({
+      type: 'open',
+      session: { sessionId: 't1', label: '会话 t1', archived: false },
+    });
+    await flush();
+    await flush();
+
+    const calls = (
+      vscode.commands.executeCommand as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls;
+    const open = calls.find((call) => call[0] === 'vscode.openWith');
+    expect(open).toBeDefined();
+    expect(open![1]).toBe(tab.input.uri);
+  });
+
   // REQ: 会话归档与删除 / Scenario: 预检命中「Codex 那侧持有」时连请求都不发（接线层）
   it('archive_precheck_blocks_the_request_when_codex_holds_the_thread', async () => {
-    interceptTreeView();
+    interceptWebviewView();
     activate(makeContext() as never);
     heldRollouts.current = new Map([['t1', 30157]]);
 
@@ -336,7 +408,7 @@ describe('extension', () => {
 
   // REQ: 会话归档与删除 / Scenario: 删除只关闭被删会话自己的标签
   it('delete_closes_only_the_matching_tab', async () => {
-    interceptTreeView();
+    interceptWebviewView();
     activate(makeContext() as never);
     const doomed = makeTab('t1');
     const survivor = makeTab('t2');
@@ -352,7 +424,7 @@ describe('extension', () => {
 
   // REQ: 会话重命名 / Scenario: 重命名成功后刷新列表（接线层）
   it('rename_refreshes_the_list_after_a_successful_write_back', async () => {
-    interceptTreeView();
+    interceptWebviewView();
     activate(makeContext() as never);
     answerRenameWith('价格排查');
 
@@ -367,7 +439,7 @@ describe('extension', () => {
 
   // REQ: 会话重命名 / Scenario: 重命名失败时提示错误（失败不得刷新，否则是假成功）
   it('rename_failure_does_not_refresh_the_list', async () => {
-    interceptTreeView();
+    interceptWebviewView();
     activate(makeContext() as never);
     answerRenameWith('价格排查');
 
@@ -383,7 +455,7 @@ describe('extension', () => {
 
   // REQ: 会话重命名 / Scenario: 用户取消输入时不发请求（取消不刷新）
   it('rename_cancel_does_not_refresh_the_list', async () => {
-    interceptTreeView();
+    interceptWebviewView();
     activate(makeContext() as never);
 
     await activatedHandler('codexHelper.renameSession')({ sessionId: 't1', label: '旧名字' });
@@ -406,7 +478,7 @@ describe('extension', () => {
       for (const outcome of ['ok', 'fail'] as const) {
         vi.clearAllMocks();
         refreshes = 0;
-        interceptTreeView();
+        interceptWebviewView();
         const context = makeContext();
         await context.globalState.update(PIN_STATE_KEY, ['t1']);
         activate(context as never);
@@ -444,7 +516,7 @@ describe('extension', () => {
 
   // REQ: 新建会话 / Scenario: 建会话成功后打开绑定标签
   it('new_session_command_creates_bound_session_with_one_shot_process', async () => {
-    interceptTreeView();
+    interceptWebviewView();
     activate(makeContext() as never);
     answerGitInfo();
     (vscode.workspace as { workspaceFolders?: unknown }).workspaceFolders = [
@@ -486,17 +558,18 @@ describe('extension', () => {
     // 一次性进程必须死掉：它活着就持有 writer 锁，Codex 面板 resume 会被拒
     expect(oneShot.killed).toBe(true);
 
-    const [command, uri] = (
+    const calls = (
       vscode.commands.executeCommand as unknown as { mock: { calls: Array<[string, UriLike]> } }
-    ).mock.calls[0]!;
-    expect(command).toBe('vscode.openWith');
-    expect(uri.path).toBe('/local/tid-1');
+    ).mock.calls;
+    const open = calls.find((call) => call[0] === 'vscode.openWith');
+    expect(open).toBeDefined();
+    expect(open![1].path).toBe('/local/tid-1');
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
   // REQ: 新建会话记忆思考级别 / Scenario: 新建会话沿用上次用过的级别（接线层）
   it('new_session_records_the_last_used_reasoning_effort_on_the_new_session', async () => {
-    interceptTreeView();
+    interceptWebviewView();
     activate(makeContext() as never);
     answerGitInfo();
     (vscode.workspace as { workspaceFolders?: unknown }).workspaceFolders = [
@@ -541,7 +614,7 @@ describe('extension', () => {
 
   // REQ: 新建会话 / Scenario: 非 git 工作区仍然建会话并打开绑定标签
   it('new_session_still_binds_in_a_non_git_workspace', async () => {
-    interceptTreeView();
+    interceptWebviewView();
     activate(makeContext() as never);
     // 既没有 vscode.git，也没有 Codex 扩展：探测不到任何真实 git 信息
     (
@@ -570,18 +643,19 @@ describe('extension', () => {
       threadId: 'tid-nogit',
       gitInfo: { sha: '0'.repeat(40) },
     });
-    const [command, uri] = (
+    const calls = (
       vscode.commands.executeCommand as unknown as { mock: { calls: Array<[string, UriLike]> } }
-    ).mock.calls[0]!;
-    expect(command).toBe('vscode.openWith');
-    expect(uri.path).toBe('/local/tid-nogit');
+    ).mock.calls;
+    const open = calls.find((call) => call[0] === 'vscode.openWith');
+    expect(open).toBeDefined();
+    expect(open![1].path).toBe('/local/tid-nogit');
   });
 
   // REQ: 新建会话 / Scenario: 会话进列表后自动出现在侧边栏（接线层）
   it('new_session_arms_a_watch_and_refreshes_once_it_shows_up', async () => {
     const intervalSpy = vi.spyOn(globalThis, 'setInterval');
     try {
-      interceptTreeView();
+      interceptWebviewView();
       activate(makeContext() as never);
       (
         vscode.extensions.getExtension as unknown as { mockImplementation(fn: unknown): void }
@@ -618,6 +692,10 @@ describe('extension', () => {
       await answerListRequests([makeThread({ id: 'tid-new', name: '第一个会话' })]);
       await flush();
       await checked;
+      // refresh 现在会真的重新拉一次列表（Webview 不能靠 TreeView 的惰性 getChildren），
+      // 这一批请求要再喂一轮才会触发刷新事件
+      await answerListRequests([makeThread({ id: 'tid-new', name: '第一个会话' })]);
+      await flush();
 
       expect(refreshes).toBeGreaterThan(0);
     } finally {

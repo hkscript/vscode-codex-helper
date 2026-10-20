@@ -66,6 +66,23 @@ export interface ThreadListResponse {
   nextCursor: string | null;
 }
 
+/** One item from `thread/items/list`, wrapped with its turn id. */
+export interface ThreadItemRecord {
+  turnId?: string;
+  item?: {
+    type?: string;
+    id?: string;
+    text?: string;
+    phase?: string;
+    content?: Array<{ type?: string; text?: string }>;
+  };
+}
+
+export interface ThreadItemsResponse {
+  data: ThreadItemRecord[];
+  nextCursor: string | null;
+}
+
 /** A Codex custom editor tab found in the current window. */
 export interface OpenTab {
   /**

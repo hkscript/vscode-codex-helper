@@ -10,53 +10,63 @@ interface MenuContribution {
 const manifest = JSON.parse(
   readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'),
 ) as {
+  extensionDependencies?: string[];
   contributes: {
     commands: Array<{ command: string; icon?: string }>;
-    menus: { 'view/item/context': MenuContribution[] };
+    menus: { 'view/title': MenuContribution[] };
     viewsContainers: { activitybar: Array<{ id: string; title: string }> };
-    views: Record<string, Array<{ id: string; name: string; contextualTitle?: string }>>;
+    views: Record<
+      string,
+      Array<{
+        id: string;
+        name: string;
+        contextualTitle?: string;
+        when?: string;
+        type?: string;
+      }>
+    >;
   };
 };
 
-function entriesFor(command: string): MenuContribution[] {
-  return manifest.contributes.menus['view/item/context'].filter((entry) => entry.command === command);
-}
-
-function isInline(entry: MenuContribution): boolean {
-  return (entry.group ?? '').startsWith('inline');
-}
-
 describe('packageContributes', () => {
-  // REQ: 会话归档与删除 / Scenario: 未归档条目提供归档按钮、已归档条目提供删除按钮
-  it('archive_inline_on_sessions_delete_inline_on_archived', () => {
-    const archive = entriesFor('codexHelper.archiveSession');
-    const remove = entriesFor('codexHelper.deleteSession');
-    const open = entriesFor('codexHelper.openSession');
+  // VS Code 默认把扩展视图当成 TreeView；不写 type: webview 时，
+  // 即使调用了 registerWebviewViewProvider，视图也永远不会 resolve（实测）。
+  it('declares_the_session_view_as_a_webview', () => {
+    const view = manifest.contributes.views.codexHelper?.find(
+      (entry) => entry.id === 'codexHelper.sessions',
+    );
+    expect(view?.type).toBe('webview');
+    // 不再需要靠 when 门控或抢先在启动阶段激活
+    expect(view?.when).toBeUndefined();
+  });
 
-    // 悬停按钮：归档只挂在未归档条目上
-    expect(archive).toHaveLength(1);
-    expect(isInline(archive[0]!)).toBe(true);
-    expect(archive[0]!.when).toContain('viewItem =~ /^session/');
-    expect(archive[0]!.when).toContain('viewItem != session.archived');
+  it('keeps_the_official_codex_extension_as_a_dependency', () => {
+    expect(manifest.extensionDependencies).toContain('openai.chatgpt');
+  });
 
-    // 删除只挂在已归档条目上 —— 「必须先归档」这道闸就是靠这条 when 实现的
-    expect(remove).toHaveLength(1);
-    expect(isInline(remove[0]!)).toBe(true);
-    expect(remove[0]!.when).toContain('viewItem == session.archived');
+  // 侧边栏换成 Webview 后，行内菜单由 webview 自己画；标题栏只保留全局动作，
+  // 搜索框和目录筛选也在 webview 里，不该再重复占一个标题栏图标。
+  it('title_bar_only_keeps_global_actions', () => {
+    const titles = manifest.contributes.menus['view/title'];
+    const commands = titles.map((entry) => entry.command);
 
-    // 「打开会话」不再占悬停区（点击条目本身就能打开），但右键菜单里仍然有
-    expect(open.length).toBeGreaterThan(0);
-    expect(open.some(isInline)).toBe(false);
+    expect(commands).toContain('codexHelper.newSession');
+    expect(commands).toContain('codexHelper.refresh');
+    expect(commands).not.toContain('codexHelper.setFilter');
+    expect(commands).not.toContain('codexHelper.clearFilter');
 
-    // 取消归档必须有入口：归档可逆是「删除不弹确认」的前提
-    const unarchive = entriesFor('codexHelper.unarchiveSession');
-    expect(unarchive.length).toBeGreaterThan(0);
-    expect(unarchive[0]!.when).toContain('viewItem == session.archived');
-
-    // 悬停按钮的视觉锚点：图标名必须是真实存在的 codicon
-    const commands = manifest.contributes.commands;
-    expect(commands.find((entry) => entry.command === 'codexHelper.archiveSession')?.icon).toBe('$(archive)');
-    expect(commands.find((entry) => entry.command === 'codexHelper.deleteSession')?.icon).toBe('$(trash)');
+    // 命令本身仍然保留：命令面板和 webview 消息都会用到
+    const declared = manifest.contributes.commands.map((entry) => entry.command);
+    for (const command of [
+      'codexHelper.openSession',
+      'codexHelper.renameSession',
+      'codexHelper.pinSession',
+      'codexHelper.archiveSession',
+      'codexHelper.unarchiveSession',
+      'codexHelper.deleteSession',
+    ]) {
+      expect(declared).toContain(command);
+    }
   });
 
   // REQ: 侧边栏标题 / Scenario: 侧边栏标题不出现重复的「会话」

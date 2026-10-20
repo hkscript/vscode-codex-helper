@@ -5,7 +5,7 @@
  *  1. explicit fakes handed to the injected seams (uri api, memento, spawn, …);
  *  2. a stand-in for the `vscode` module itself — `vitest.config.ts` aliases
  *     `vscode` to this file so modules that legitimately import the editor API
- *     (treeProvider / commands / extension) can still be loaded in node.
+ *     (sessionWebviewProvider / commands / extension) can still be loaded in node.
  */
 import { vi } from 'vitest';
 import type { MementoLike, OpenTab, Thread, Turn, UriApi, UriLike, UriLikeWith } from '../../src/codex/types';
@@ -258,6 +258,7 @@ export const window = {
   showWarningMessage: vi.fn(() => undefined),
   createTreeView: vi.fn(() => ({ dispose: vi.fn() })),
   registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
+  registerWebviewViewProvider: vi.fn(() => ({ dispose: vi.fn() })),
   // 进度通知：测试里直接执行任务本身（通知的去留不影响断言）
   withProgress: vi.fn(async (_options: unknown, task: (progress: unknown) => unknown) =>
     task({ report: () => undefined }),
