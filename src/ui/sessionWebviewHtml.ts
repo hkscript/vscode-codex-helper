@@ -68,7 +68,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   .search-row:focus-within { border-color: var(--vscode-focusBorder); }
   .search-row input {
     flex: 1;
-    min-width: 0;
+    min-width: 72px;
     padding: 5px 0;
     border: 0;
     outline: 0;
@@ -77,14 +77,6 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     font: inherit;
   }
   .search-row input::placeholder { color: var(--vscode-input-placeholderForeground); }
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    padding: 1px 8px 7px;
-    color: var(--vscode-descriptionForeground);
-  }
   .icon-btn {
     display: inline-flex;
     align-items: center;
@@ -95,7 +87,6 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   }
   .icon-btn:hover { background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
   .icon-btn.active { color: var(--vscode-focusBorder); }
-  .toolbar svg { width: 16px; height: 16px; }
   .filter-btn {
     display: inline-flex;
     align-items: center;
@@ -113,7 +104,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     gap: 5px;
     flex: 0 1 auto;
     width: fit-content;
-    max-width: calc(100% - 44px);
+    max-width: 55%;
     min-width: 0;
     padding: 2px 8px;
     border-radius: 10px;
@@ -322,9 +313,6 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     <span id="search-icon"></span>
     <input id="search" type="text" placeholder="Search sessions..." autocomplete="off" spellcheck="false" aria-label="搜索会话" />
     <button id="clear-search" class="icon-btn hidden" title="清除搜索" aria-label="清除搜索"></button>
-  </div>
-
-  <div class="toolbar">
     <button id="cwd-filter" class="filter-btn" title="按工作目录过滤" aria-label="按工作目录过滤">
       <span id="cwd-filter-icon"></span>
     </button>
