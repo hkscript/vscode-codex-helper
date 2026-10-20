@@ -313,14 +313,14 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     <span id="search-icon"></span>
     <input id="search" type="text" placeholder="Search sessions..." autocomplete="off" spellcheck="false" aria-label="搜索会话" />
     <button id="clear-search" class="icon-btn hidden" title="清除搜索" aria-label="清除搜索"></button>
-    <button id="cwd-filter" class="filter-btn" title="按工作目录过滤" aria-label="按工作目录过滤">
-      <span id="cwd-filter-icon"></span>
-    </button>
     <span id="cwd-chip" class="chip hidden">
       <span id="cwd-chip-prefix">过滤</span>
       <span id="cwd-chip-label" class="chip-label"></span>
       <button id="cwd-chip-clear" title="清除目录过滤" aria-label="清除目录过滤"></button>
     </span>
+    <button id="cwd-filter" class="filter-btn" title="按工作目录过滤" aria-label="按工作目录过滤">
+      <span id="cwd-filter-icon"></span>
+    </button>
   </div>
 
   <div id="list" class="list" role="tree"></div>
