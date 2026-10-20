@@ -329,7 +329,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
 
   <div id="cwd-chip" class="chip-row hidden">
     <span class="chip">
-      <span>目录</span>
+      <span>过滤</span>
       <span id="cwd-chip-label" class="chip-label"></span>
       <button id="cwd-chip-clear" title="清除目录过滤" aria-label="清除目录过滤"></button>
     </span>
