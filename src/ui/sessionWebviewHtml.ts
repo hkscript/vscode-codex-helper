@@ -112,7 +112,9 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    flex: 1 1 auto;
+    flex: 0 1 auto;
+    width: fit-content;
+    max-width: calc(100% - 44px);
     min-width: 0;
     padding: 2px 8px;
     border-radius: 10px;
