@@ -293,18 +293,18 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
   .tooltip-label {
     float: left;
     margin: 0 6px 0 0;
-    padding: 0 7px;
-    border-radius: 9px;
+    padding: 0 8px;
+    border-radius: 10px;
     background: var(--vscode-activityBarBadge-background, #0e639c);
     color: var(--vscode-activityBarBadge-foreground, #fff);
-    font-size: 11px;
+    font-size: 16px;
     font-weight: 700;
-    line-height: 18px;
+    line-height: 20px;
     white-space: nowrap;
   }
   .tooltip-text {
     display: block;
-    line-height: 18px;
+    line-height: 20px;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
