@@ -317,7 +317,7 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
       <span id="cwd-filter-icon"></span>
     </button>
     <span id="cwd-chip" class="chip hidden">
-      <span>过滤</span>
+      <span id="cwd-chip-prefix">过滤</span>
       <span id="cwd-chip-label" class="chip-label"></span>
       <button id="cwd-chip-clear" title="清除目录过滤" aria-label="清除目录过滤"></button>
     </span>
@@ -392,9 +392,10 @@ export function sessionWebviewHtml({ nonce, cspSource }: SessionWebviewHtmlOptio
           chip.classList.add('hidden');
           return;
         }
-        el('cwd-chip-label').textContent = selected.length === 1
-          ? basename(selected[0])
-          : selected.length + ' 个目录';
+        // 只选一个目录时只显示目录名，避免「过滤 foo」这种冗余前缀
+        el('cwd-chip-prefix').classList.toggle('hidden', selected.length === 1);
+        el('cwd-chip-label').textContent =
+          selected.length === 1 ? basename(selected[0]) : selected.length + ' 个目录';
         el('cwd-chip-label').title = selected.join('\n');
         chip.classList.remove('hidden');
       }
