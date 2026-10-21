@@ -46,8 +46,8 @@ button {
 }
 .search-row:focus-within { border-color: var(--vscode-focusBorder); }
 .search-row input {
-  flex: 1;
-  min-width: 72px;
+  flex: 1 1 0;
+  min-width: 0;
   padding: 5px 0;
   border: 0;
   outline: 0;
@@ -58,6 +58,7 @@ button {
 .search-row input::placeholder { color: var(--vscode-input-placeholderForeground); }
 .icon-btn {
   display: inline-flex;
+  flex: none;
   align-items: center;
   justify-content: center;
   width: 28px;
@@ -68,6 +69,7 @@ button {
 .icon-btn.active { color: var(--vscode-focusBorder); }
 .filter-btn {
   display: inline-flex;
+  flex: none;
   align-items: center;
   height: 22px;
   padding: 0 2px;
@@ -77,19 +79,29 @@ button {
 .filter-btn:hover { background: var(--vscode-toolbar-activeBackground, rgba(127, 127, 127, .2)); }
 .filter-btn.active { color: var(--vscode-focusBorder); }
 .filter-btn svg { width: 16px; height: 16px; }
+.search-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+.search-icon svg { width: 16px; height: 16px; }
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   flex: 0 1 auto;
   width: fit-content;
-  max-width: 55%;
+  max-width: 60%;
   min-width: 0;
   padding: 2px 8px;
   border-radius: 10px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
   font-size: 11px;
+  cursor: pointer;
 }
 .chip-label {
   min-width: 0;
@@ -155,6 +167,21 @@ button {
   white-space: nowrap;
 }
 .pin { margin-right: 2px; font-size: 11px; }
+.row-running {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: row-running-spin .8s linear infinite;
+}
+@keyframes row-running-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .row-running { animation: none; border-top-color: currentColor; }
+}
 .row-time { flex: none; color: var(--vscode-descriptionForeground); font-size: 12px; }
 .row-more {
   flex: none;

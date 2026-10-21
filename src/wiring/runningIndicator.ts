@@ -22,7 +22,10 @@ export interface RunningTrackerWiringDeps {
   configuration(): vscode.WorkspaceConfiguration;
   scanner: HeldRolloutScanner;
   listTurns(threadId: string): Promise<Turn | undefined>;
-  view: Pick<SessionWebviewProvider, 'refresh' | 'isVisible' | 'onDidChangeVisibility'>;
+  view: Pick<
+    SessionWebviewProvider,
+    'setRunning' | 'isVisible' | 'onDidChangeVisibility'
+  >;
   subscriptions: Array<{ dispose(): unknown }>;
 }
 
@@ -36,7 +39,7 @@ export function wireRunningTracker(deps: RunningTrackerWiringDeps): RunningTrack
       const watcher = watch(path, onChange);
       return { close: () => watcher.close() };
     },
-    onChange: () => deps.view.refresh(),
+    onChange: (ids) => deps.view.setRunning(ids),
     pollSeconds: deps.configuration().get<number>('runningPollSeconds') ?? 5,
     staleSeconds: deps.configuration().get<number>('runningStaleSeconds') ?? 300,
   });

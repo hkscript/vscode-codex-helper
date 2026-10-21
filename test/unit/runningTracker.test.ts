@@ -28,6 +28,7 @@ function harness(options: {
   turns?: (threadId: string) => Promise<Turn | undefined>;
   watchThrows?: boolean;
   pollSeconds?: number;
+  maxWaitMs?: number;
 }) {
   const watchers = new Map<string, FakeWatcher>();
   const notifications: Array<Set<string>> = [];
@@ -55,6 +56,7 @@ function harness(options: {
     onChange: (ids) => notifications.push(ids),
     now: () => NOW_MS,
     debounceMs: DEBOUNCE,
+    maxWaitMs: options.maxWaitMs,
     pollSeconds: options.pollSeconds ?? 5,
     staleSeconds: 300,
   });
@@ -121,6 +123,66 @@ describe('runningTracker', () => {
     expect(listTurns).toHaveBeenCalledTimes(2);
     expect(notifications).toHaveLength(1);
     expect([...notifications[0]!]).toEqual(['t1']);
+
+    tracker.dispose();
+  });
+
+  it('recomputes_when_rollout_writes_keep_debounce_pending', async () => {
+    const maxWait = 1000;
+    let turn: Turn = doneTurn();
+    const listTurns = vi.fn(async () => turn);
+    const { tracker, watchers, notifications } = harness({
+      maxWaitMs: maxWait,
+      turns: listTurns,
+    });
+
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(listTurns).toHaveBeenCalledTimes(1);
+
+    // 每 100ms 一次 rollout 写入，持续重置 trailing debounce：
+    // 没有最大等待时，这轮重算会被永久饿死。
+    turn = runningTurn();
+    const watcher = watchers.get(pathOf('t1'))!;
+    watcher.fire();
+    for (let elapsed = 100; elapsed < maxWait; elapsed += 100) {
+      await vi.advanceTimersByTimeAsync(100);
+      watcher.fire();
+    }
+    await vi.advanceTimersByTimeAsync(99);
+    expect(listTurns).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(listTurns).toHaveBeenCalledTimes(2);
+    expect(notifications).toHaveLength(1);
+    expect([...notifications[0]!]).toEqual(['t1']);
+
+    tracker.dispose();
+  });
+
+  it('refresh_recomputes_with_a_fresh_scan_without_update', async () => {
+    const scans: boolean[] = [];
+    const listTurns = vi.fn(async () => doneTurn());
+    const { tracker } = harness({
+      scan: async ({ fresh }) => {
+        scans.push(fresh);
+        return new Map([['t1', 4242]]);
+      },
+      turns: listTurns,
+    });
+
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(scans).toEqual([true]);
+    expect(listTurns).toHaveBeenCalledTimes(1);
+
+    // 标签变化后当前 threads 里已经有新会话；不需要再次 update，
+    // refresh 也必须强制现扫一次，让刚加载的会话进入候选集。
+    tracker.refresh();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+    expect(scans).toEqual([true, true]);
+    expect(listTurns).toHaveBeenCalledTimes(2);
 
     tracker.dispose();
   });

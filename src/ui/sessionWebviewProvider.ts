@@ -3,7 +3,6 @@ import type * as vscode from 'vscode';
 import type {
   OpenTab,
   SessionGroup,
-  SessionItem,
   Thread,
   UriLike,
 } from '../codex/types';
@@ -19,9 +18,8 @@ import {
 import {
   collectCwdOptions,
   formatRelativeTime,
-  type CwdOption,
 } from './sessionViewModel';
-import type { HostMessage } from './webview/protocol';
+import type { HostMessage, RenderMessage, SessionGroupData } from './webview/protocol';
 
 /**
  * Raw data used to render the sidebar. The provider owns the view-only state
@@ -31,6 +29,9 @@ import type { HostMessage } from './webview/protocol';
 export interface SessionSnapshot {
   threads: Thread[];
   archivedThreads: Thread[];
+  /** 目录菜单专用数据；未提供时退回当前列表。 */
+  cwdThreads?: Thread[];
+  cwdArchivedThreads?: Thread[];
   openTabs: OpenTab[];
   pinnedIds: string[];
   runningIds: Iterable<string> | null;
@@ -72,6 +73,8 @@ export interface SessionWebviewDeps {
   initialCwdFilter?: string[];
   /** 目录选择变化时写回 workspaceState（失败不影响界面）。 */
   saveCwdFilter?(cwdFilter: string[]): Promise<void> | void;
+  /** 目录过滤变化后通知调用方；提供时由调用方负责同步服务端过滤并把新结果重新拉回。 */
+  onCwdFilterChange?(cwdFilter: string[]): Promise<void> | void;
   /** Fetch a fresh first page from the app-server. Throws when loading fails. */
   fetch(): Promise<void>;
   /** 过滤生效时把未加载的分页全部拉完。 */
@@ -104,39 +107,19 @@ export interface SessionWebviewProvider {
   reload(): Promise<void>;
   /** 定时刷新用：视图可见才真的 reload；不可见时只记下过期，等重新可见再补拉一次。 */
   reloadWhenVisible(): void;
+  /** 运行集合变化：只更新行的运行图标，不重建整页。 */
+  setRunning(ids: Iterable<string> | null): void;
   /** 视图当前是否显示在屏幕上（还没解析过、已销毁都算不可见）。 */
   isVisible(): boolean;
   onDidChangeVisibility(listener: (visible: boolean) => void): { dispose(): void };
   setFilter(value: string): void;
-  clearFilters(): void;
+  clearFilters(): Promise<void>;
   focusSearch(): void;
   onDidChange(listener: () => void): { dispose(): void };
   dispose(): void;
 }
 
-interface SessionRow extends Omit<SessionItem, 'tabUri'> {
-  time: string;
-}
-
-interface RenderGroup {
-  id: string;
-  label: string;
-  sessions: SessionRow[];
-}
-
-interface RenderPayload {
-  type: 'render';
-  groups: RenderGroup[];
-  cwds: CwdOption[];
-  filter: string;
-  cwdFilter: string[];
-  expanded: Record<string, boolean>;
-  loading: boolean;
-  error: string | null;
-  hasMore: boolean;
-  archivedHasMore: boolean;
-  loadingAll: boolean;
-}
+const PREVIEW_CACHE_MAX_ENTRIES = 200;
 
 /** `history` and `archived` start collapsed; the two active groups stay open. */
 function defaultExpanded(groupId: string): boolean {
@@ -159,6 +142,8 @@ export function createSessionWebviewProvider(
   const visibilityListeners = new Set<(visible: boolean) => void>();
   const expanded = new Map<string, boolean>();
   const messageCache = new Map<string, { updatedAt: number | null; preview: SessionPreview }>();
+  let renderedGroups: SessionGroupData[] | null = null;
+  let renderedRunningKey: string | null = null;
   let view: vscode.WebviewView | undefined;
   let filter = '';
   let cwdFilter: string[] = [...(deps.initialCwdFilter ?? [])];
@@ -198,14 +183,24 @@ export function createSessionWebviewProvider(
     return expanded.get(groupId) ?? defaultExpanded(groupId);
   }
 
-  function changeCwdFilter(next: string[]): void {
-    cwdFilter = next;
+  function sameCwdFilter(left: readonly string[], right: readonly string[]): boolean {
+    return left.length === right.length && left.every((cwd, index) => cwd === right[index]);
+  }
+
+  async function changeCwdFilter(next: string[]): Promise<void> {
+    if (sameCwdFilter(cwdFilter, next)) return;
+    cwdFilter = [...next];
     try {
       void Promise.resolve(deps.saveCwdFilter?.([...cwdFilter])).catch(() => undefined);
     } catch {
       // workspaceState 写失败只是记不住选择，不能影响过滤本身
     }
     render();
+    if (deps.onCwdFilterChange) {
+      await deps.onCwdFilterChange([...cwdFilter]);
+      await reload();
+      return;
+    }
     ensureAllLoaded();
   }
 
@@ -228,9 +223,8 @@ export function createSessionWebviewProvider(
     render();
   }
 
-  function payload(): RenderPayload {
-    const snapshot = deps.snapshot();
-    const groups: SessionGroup[] = buildSessionGroups({
+  function buildGroups(snapshot: SessionSnapshot): SessionGroup[] {
+    return buildSessionGroups({
       threads: snapshot.threads,
       archivedThreads: snapshot.archivedThreads,
       openTabs: snapshot.openTabs,
@@ -239,22 +233,37 @@ export function createSessionWebviewProvider(
       filter,
       cwdFilter,
     });
+  }
+
+  function toRenderedGroups(groups: SessionGroup[], stamp: number): SessionGroupData[] {
+    return groups.map((group) => ({
+      id: group.id,
+      label: group.label,
+      sessions: group.sessions.map((session) => ({
+        id: session.id,
+        label: session.label,
+        pinned: session.pinned,
+        archived: session.archived,
+        running: session.running,
+        updatedAt: session.updatedAt,
+        time: formatRelativeTime(session.updatedAt, stamp),
+      })),
+    }));
+  }
+
+  function payload(): RenderMessage {
+    const snapshot = deps.snapshot();
+    const groups = buildGroups(snapshot);
     const stamp = now();
+    renderedGroups = toRenderedGroups(groups, stamp);
+    renderedRunningKey = runningKey(snapshot.runningIds);
     return {
       type: 'render',
-      groups: groups.map((group) => ({
-        id: group.id,
-        label: group.label,
-        sessions: group.sessions.map((session) => {
-          // tabUri 留在扩展宿主：webview 只需要知道“是否已打开”，回传时按 id 现查真正的 Uri
-          const { tabUri: _tabUri, ...rest } = session;
-          return {
-            ...rest,
-            time: formatRelativeTime(session.updatedAt, stamp),
-          };
-        }),
-      })),
-      cwds: collectCwdOptions(snapshot.threads, snapshot.archivedThreads),
+      groups: renderedGroups,
+      cwds: collectCwdOptions(
+        snapshot.cwdThreads ?? snapshot.threads,
+        snapshot.cwdArchivedThreads ?? snapshot.archivedThreads,
+      ),
       filter,
       cwdFilter,
       expanded: Object.fromEntries(groups.map((group) => [group.id, isExpanded(group.id)])),
@@ -266,9 +275,27 @@ export function createSessionWebviewProvider(
     };
   }
 
+  function runningKey(ids: Iterable<string> | null): string {
+    return [...(ids ?? [])].sort().join('\u0000');
+  }
+
+  function setRunning(ids: Iterable<string> | null): void {
+    if (disposed) return;
+    const next = new Set(ids ?? []);
+    const key = runningKey(next);
+    if (key === renderedRunningKey) return;
+    renderedRunningKey = key;
+    for (const group of renderedGroups ?? []) {
+      for (const session of group.sessions) session.running = next.has(session.id);
+    }
+    post({ type: 'running', ids: [...next].sort() });
+  }
+
   function post(message: HostMessage): void {
     if (!view) return;
-    void view.webview.postMessage(message);
+    void Promise.resolve(view.webview.postMessage(message)).catch((caught) => {
+      deps.logger?.warn(`发送 webview 消息失败：${errorMessage(caught)}`);
+    });
   }
 
   /**
@@ -344,19 +371,12 @@ export function createSessionWebviewProvider(
 
   function postTimes(): void {
     if (!view || !view.visible) return;
-    const snapshot = deps.snapshot();
-    const groups = buildSessionGroups({
-      threads: snapshot.threads,
-      archivedThreads: snapshot.archivedThreads,
-      openTabs: snapshot.openTabs,
-      pinnedIds: snapshot.pinnedIds,
-      runningIds: snapshot.runningIds,
-      filter,
-      cwdFilter,
-    });
+    if (!renderedGroups) {
+      renderedGroups = toRenderedGroups(buildGroups(deps.snapshot()), now());
+    }
     const stamp = now();
     const times: Record<string, string> = {};
-    for (const group of groups) {
+    for (const group of renderedGroups) {
       for (const session of group.sessions) {
         times[session.id] = formatRelativeTime(session.updatedAt, stamp);
       }
@@ -444,7 +464,7 @@ export function createSessionWebviewProvider(
         break;
       case 'toggleCwd':
         if (typeof incoming.cwd === 'string' && incoming.cwd.length > 0) {
-          changeCwdFilter(
+          await changeCwdFilter(
             cwdFilter.includes(incoming.cwd)
               ? cwdFilter.filter((cwd) => cwd !== incoming.cwd)
               : [...cwdFilter, incoming.cwd],
@@ -452,7 +472,7 @@ export function createSessionWebviewProvider(
         }
         break;
       case 'clearCwd':
-        changeCwdFilter([]);
+        await changeCwdFilter([]);
         break;
       case 'toggleGroup':
         if (typeof incoming.id === 'string') {
@@ -479,6 +499,8 @@ export function createSessionWebviewProvider(
         const cached = messageCache.get(incoming.sessionId);
         let preview: SessionPreview;
         if (cached && cached.updatedAt === updatedAt) {
+          messageCache.delete(incoming.sessionId);
+          messageCache.set(incoming.sessionId, cached);
           preview = cached.preview;
         } else {
           try {
@@ -486,7 +508,13 @@ export function createSessionWebviewProvider(
           } catch {
             preview = { userMessages: [], lastReply: null };
           }
+          messageCache.delete(incoming.sessionId);
           messageCache.set(incoming.sessionId, { updatedAt, preview });
+          while (messageCache.size > PREVIEW_CACHE_MAX_ENTRIES) {
+            const oldest = messageCache.keys().next().value;
+            if (oldest === undefined) break;
+            messageCache.delete(oldest);
+          }
         }
         post({
           type: 'preview',
@@ -541,6 +569,7 @@ export function createSessionWebviewProvider(
     refresh,
     reload,
     reloadWhenVisible,
+    setRunning,
     isVisible,
 
     onDidChangeVisibility(listener: (visible: boolean) => void) {
@@ -558,9 +587,14 @@ export function createSessionWebviewProvider(
       ensureAllLoaded();
     },
 
-    clearFilters(): void {
+    async clearFilters(): Promise<void> {
+      const filterChanged = filter.length > 0;
       filter = '';
-      changeCwdFilter([]);
+      if (cwdFilter.length === 0) {
+        if (filterChanged) render();
+        return;
+      }
+      await changeCwdFilter([]);
     },
 
     focusSearch(): void {

@@ -87,6 +87,7 @@ function render(payload: RenderMessage): void {
 function renderCwdChip(payload: RenderMessage): void {
   const chip = el('cwd-chip');
   const selected = payload.cwdFilter || [];
+  el('cwd-filter').classList.toggle('hidden', selected.length > 0);
   if (selected.length === 0) {
     chip.classList.add('hidden');
     return;
@@ -257,6 +258,13 @@ function sessionRow(session: SessionRowData): HTMLDivElement {
   }
   title.appendChild(document.createTextNode(session.label || session.id));
 
+  const running = session.running ? document.createElement('span') : null;
+  if (running) {
+    running.className = 'row-running';
+    running.title = '运行中';
+    running.setAttribute('aria-label', '运行中');
+  }
+
   const time = document.createElement('span');
   time.className = 'row-time';
   time.dataset.sessionId = session.id;
@@ -272,6 +280,7 @@ function sessionRow(session: SessionRowData): HTMLDivElement {
     showContextMenu(session, more);
   };
 
+  if (running) row.appendChild(running);
   row.appendChild(title);
   row.appendChild(time);
   row.appendChild(more);
@@ -514,10 +523,40 @@ function hideMenus(): void {
   el('ctx-menu').classList.add('hidden');
 }
 
+function toggleCwdMenu(): void {
+  const menu = el('cwd-menu');
+  if (menu.classList.contains('hidden')) {
+    hideMenus();
+    showCwdMenu();
+  } else {
+    hideMenus();
+  }
+}
+
 function updateTimes(times: Record<string, string>): void {
   for (const node of Array.from(document.querySelectorAll('.row-time'))) {
     const id = node.getAttribute('data-session-id');
     if (id && times[id]) node.textContent = times[id];
+  }
+}
+
+function updateRunning(ids: string[]): void {
+  const running = new Set(ids);
+  for (const row of Array.from(document.querySelectorAll<HTMLElement>('.row'))) {
+    const id = row.dataset.sessionId;
+    if (!id) continue;
+    const current = row.querySelector<HTMLElement>('.row-running');
+    if (running.has(id)) {
+      if (current) continue;
+      const spinner = document.createElement('span');
+      spinner.className = 'row-running';
+      spinner.title = '运行中';
+      spinner.setAttribute('aria-label', '运行中');
+      const title = row.querySelector('.row-title');
+      if (title) row.insertBefore(spinner, title);
+    } else {
+      current?.remove();
+    }
   }
 }
 
@@ -536,21 +575,27 @@ el('clear-search').onclick = () => {
   post({ type: 'setFilter', value: '' });
   el('search').focus();
 };
+el('search-icon').onclick = () => {
+  el<HTMLInputElement>('search').focus();
+};
 el('cwd-filter').onclick = (event) => {
   event.stopPropagation();
-  const menu = el('cwd-menu');
-  if (menu.classList.contains('hidden')) {
-    hideMenus();
-    showCwdMenu();
-  } else {
-    hideMenus();
-  }
+  toggleCwdMenu();
 };
 el('cwd-chip-clear').onclick = () => post({ type: 'clearCwd' });
+el('cwd-chip').onclick = (event) => {
+  if (el('cwd-chip-clear').contains(event.target as Node | null)) return;
+  event.stopPropagation();
+  toggleCwdMenu();
+};
 
 document.addEventListener('click', (event) => {
   const target = event.target as Node | null;
-  if (!el('cwd-menu').contains(target) && !el('cwd-filter').contains(target)) {
+  if (
+    !el('cwd-menu').contains(target) &&
+    !el('cwd-filter').contains(target) &&
+    !el('cwd-chip').contains(target)
+  ) {
     el('cwd-menu').classList.add('hidden');
   }
   if (!el('ctx-menu').contains(target)) el('ctx-menu').classList.add('hidden');
@@ -564,6 +609,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage | null | und
   if (!message) return;
   if (message.type === 'render') render(message);
   else if (message.type === 'times') updateTimes(message.times || {});
+  else if (message.type === 'running') updateRunning(message.ids || []);
   else if (message.type === 'preview' && message.requestId === hoverRequestId && hoverRow) {
     showPreview(message.messages, message.reply);
   } else if (message.type === 'focusSearch') el('search').focus();

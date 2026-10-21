@@ -18,13 +18,16 @@ export interface SessionSourceDeps {
   api(): Pick<ThreadApi, 'listThreads' | 'listItems'>;
   /** `thread/list` 的 cwd 过滤（没开「按工作区过滤」时是 null）。 */
   workspaceCwd(): string | null;
-  /** 首页重新拉回来之后：最新的未归档会话（分页追加的不算）。 */
+  /** 未归档列表变化之后：fetch 首页或 loadAll/loadMore 合并后的最新快照。 */
   onFetched?(threads: Thread[]): void;
 }
 
 export interface SessionPages {
   threads: Thread[];
   archivedThreads: Thread[];
+  /** 目录菜单专用：不被单目录服务端过滤收缩。 */
+  cwdThreads: Thread[];
+  cwdArchivedThreads: Thread[];
   hasMore: boolean;
   archivedHasMore: boolean;
 }
@@ -39,6 +42,8 @@ export interface SessionSource {
   loadAll(): Promise<void>;
   /** 给这一批追加下一页；已经没有下一页时什么都不做，返回 false。 */
   loadMore(archived: boolean): Promise<boolean>;
+  /** 恰好选中一个目录时用它覆盖 workspaceCwd；0 个或多个目录时仍用工作区。 */
+  setCwdFilter(cwdFilter: readonly string[]): Promise<void> | void;
   /**
    * 悬停预览：前两次用户输入 + 最后一次用户输入 + 模型最后回复。
    * 首尾并行拉；尾部扫描到 `final_answer` 为止，找不到最终答复则退回最后一条助手消息。
@@ -52,6 +57,65 @@ export function createSessionSource(deps: SessionSourceDeps): SessionSource {
   let archivedThreads: Thread[] = [];
   let cursor: string | null = null;
   let archivedCursor: string | null = null;
+  let cwdFilter: readonly string[] = [];
+  const threadIds = new Set<string>();
+  const archivedThreadIds = new Set<string>();
+  const cwdThreads: Thread[] = [];
+  const cwdArchivedThreads: Thread[] = [];
+  const cwdThreadIds = new Set<string>();
+  const cwdArchivedThreadIds = new Set<string>();
+  let catalogLoaded = false;
+  const loadingMore = new Set<'active' | 'archived'>();
+  let operationQueue: Promise<void> = Promise.resolve();
+
+  function currentCwd(): string | null {
+    const selected = cwdFilter[0];
+    return cwdFilter.length === 1 && selected !== undefined
+      ? selected
+      : deps.workspaceCwd();
+  }
+
+  function appendUnique(
+    target: Thread[],
+    incoming: readonly Thread[],
+    seen: Set<string>,
+  ): number {
+    let appended = 0;
+    for (const thread of incoming) {
+      if (seen.has(thread.id)) continue;
+      seen.add(thread.id);
+      target.push(thread);
+      appended += 1;
+    }
+    return appended;
+  }
+
+  function replaceThreads(
+    target: Thread[],
+    incoming: readonly Thread[],
+    seen: Set<string>,
+  ): void {
+    target.length = 0;
+    seen.clear();
+    appendUnique(target, incoming, seen);
+  }
+
+  function enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = operationQueue.then(operation);
+    operationQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  function rememberCwdThreads(incoming: readonly Thread[], archived: boolean): void {
+    appendUnique(
+      archived ? cwdArchivedThreads : cwdThreads,
+      incoming,
+      archived ? cwdArchivedThreadIds : cwdThreadIds,
+    );
+  }
 
   async function collectItems(
     threadId: string,
@@ -76,55 +140,95 @@ export function createSessionSource(deps: SessionSourceDeps): SessionSource {
   }
 
   return {
-    async fetch() {
-      const [page, archivedPage] = await Promise.all([
-        deps.api().listThreads({ cwd: deps.workspaceCwd(), cursor: null }),
-        deps.api().listThreads({ cwd: deps.workspaceCwd(), archived: true }),
-      ]);
-      threads = page.data ?? [];
-      archivedThreads = archivedPage.data ?? [];
-      cursor = page.nextCursor ?? null;
-      archivedCursor = archivedPage.nextCursor ?? null;
-      deps.onFetched?.(threads);
-    },
-
-    async loadAll() {
-      const seen = new Set<string>();
-      while (cursor && !seen.has(cursor)) {
-        seen.add(cursor);
-        const page = await deps.api().listThreads({ cwd: deps.workspaceCwd(), cursor });
-        threads = [...threads, ...(page.data ?? [])];
+    fetch() {
+      return enqueue(async () => {
+        const cwd = currentCwd();
+        const [page, archivedPage] = await Promise.all([
+          deps.api().listThreads({ cwd, cursor: null }),
+          deps.api().listThreads({ cwd, archived: true }),
+        ]);
+        replaceThreads(threads, page.data ?? [], threadIds);
+        replaceThreads(archivedThreads, archivedPage.data ?? [], archivedThreadIds);
+        rememberCwdThreads(page.data ?? [], false);
+        rememberCwdThreads(archivedPage.data ?? [], true);
         cursor = page.nextCursor ?? null;
-      }
-      const seenArchived = new Set<string>();
-      while (archivedCursor && !seenArchived.has(archivedCursor)) {
-        seenArchived.add(archivedCursor);
-        const page = await deps.api().listThreads({
-          cwd: deps.workspaceCwd(),
-          cursor: archivedCursor,
-          archived: true,
-        });
-        archivedThreads = [...archivedThreads, ...(page.data ?? [])];
-        archivedCursor = page.nextCursor ?? null;
-      }
-    },
-
-    async loadMore(archived) {
-      const next = archived ? archivedCursor : cursor;
-      if (!next) return false;
-      const page = await deps.api().listThreads({
-        cwd: deps.workspaceCwd(),
-        cursor: next,
-        ...(archived ? { archived: true } : {}),
+        archivedCursor = archivedPage.nextCursor ?? null;
+        if (!cwd) {
+          catalogLoaded = true;
+        } else if (!catalogLoaded) {
+          try {
+            const catalogCwd = deps.workspaceCwd();
+            const [allThreads, allArchived] = await Promise.all([
+              deps.api().listThreads({ cwd: catalogCwd, cursor: null }),
+              deps.api().listThreads({ cwd: catalogCwd, archived: true }),
+            ]);
+            rememberCwdThreads(allThreads.data ?? [], false);
+            rememberCwdThreads(allArchived.data ?? [], true);
+            catalogLoaded = true;
+          } catch {
+            // 目录目录表只是辅助信息，拉不到不能影响当前筛选结果
+          }
+        }
+        deps.onFetched?.([...threads]);
       });
-      if (archived) {
-        archivedThreads = [...archivedThreads, ...(page.data ?? [])];
-        archivedCursor = page.nextCursor ?? null;
-      } else {
-        threads = [...threads, ...(page.data ?? [])];
-        cursor = page.nextCursor ?? null;
-      }
-      return true;
+    },
+
+    loadAll() {
+      return enqueue(async () => {
+        const cwd = currentCwd();
+        let activeAppended = 0;
+        const seen = new Set<string>();
+        while (cursor && !seen.has(cursor)) {
+          seen.add(cursor);
+          const page = await deps.api().listThreads({ cwd, cursor });
+          activeAppended += appendUnique(threads, page.data ?? [], threadIds);
+          rememberCwdThreads(page.data ?? [], false);
+          cursor = page.nextCursor ?? null;
+        }
+        const seenArchived = new Set<string>();
+        while (archivedCursor && !seenArchived.has(archivedCursor)) {
+          seenArchived.add(archivedCursor);
+          const page = await deps.api().listThreads({
+            cwd,
+            cursor: archivedCursor,
+            archived: true,
+          });
+          appendUnique(archivedThreads, page.data ?? [], archivedThreadIds);
+          rememberCwdThreads(page.data ?? [], true);
+          archivedCursor = page.nextCursor ?? null;
+        }
+        if (activeAppended > 0) deps.onFetched?.([...threads]);
+      });
+    },
+
+    loadMore(archived) {
+      const batch = archived ? 'archived' : 'active';
+      if (loadingMore.has(batch)) return Promise.resolve(false);
+      loadingMore.add(batch);
+      return enqueue(async () => {
+        try {
+          const next = archived ? archivedCursor : cursor;
+          if (!next) return false;
+          const page = await deps.api().listThreads({
+            cwd: currentCwd(),
+            cursor: next,
+            ...(archived ? { archived: true } : {}),
+          });
+          if (archived) {
+            appendUnique(archivedThreads, page.data ?? [], archivedThreadIds);
+            rememberCwdThreads(page.data ?? [], true);
+            archivedCursor = page.nextCursor ?? null;
+          } else {
+            appendUnique(threads, page.data ?? [], threadIds);
+            rememberCwdThreads(page.data ?? [], false);
+            cursor = page.nextCursor ?? null;
+            deps.onFetched?.([...threads]);
+          }
+          return true;
+        } finally {
+          loadingMore.delete(batch);
+        }
+      });
     },
 
     async loadPreview(threadId) {
@@ -148,9 +252,15 @@ export function createSessionSource(deps: SessionSourceDeps): SessionSource {
       return buildSessionPreview(first, tail);
     },
 
+    setCwdFilter(nextCwdFilter) {
+      cwdFilter = [...nextCwdFilter];
+    },
+
     pages: () => ({
       threads,
       archivedThreads,
+      cwdThreads,
+      cwdArchivedThreads,
       hasMore: cursor !== null,
       archivedHasMore: archivedCursor !== null,
     }),

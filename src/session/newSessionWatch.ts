@@ -36,35 +36,46 @@ export function createNewSessionWatch(deps: NewSessionWatchDeps): NewSessionWatc
   /** 还没进列表的会话：id → 开始等的时刻。 */
   const pending = new Map<string, number>();
   let timer: { cancel(): void } | undefined;
+  let checking = false;
+  let generation = 0;
 
   function stop(): void {
+    generation += 1;
     timer?.cancel();
     timer = undefined;
     pending.clear();
   }
 
   async function check(): Promise<void> {
-    const openIds = deps.openTabIds();
-    const now = deps.now();
-    for (const [id, startedAt] of pending) {
-      if (!openIds.has(id) || now - startedAt > maxWaitMs) pending.delete(id);
-    }
-    if (pending.size === 0) {
-      stop();
-      return;
-    }
-
-    let listed: Iterable<string>;
+    if (checking) return;
+    checking = true;
+    const runGeneration = generation;
     try {
-      listed = await deps.listThreadIds();
-    } catch {
-      return; // 拉列表失败（app-server 忙/重启中）：下一拍再试
+      const openIds = deps.openTabIds();
+      const now = deps.now();
+      for (const [id, startedAt] of pending) {
+        if (!openIds.has(id) || now - startedAt > maxWaitMs) pending.delete(id);
+      }
+      if (pending.size === 0) {
+        stop();
+        return;
+      }
+
+      let listed: Iterable<string>;
+      try {
+        listed = await deps.listThreadIds();
+      } catch {
+        return; // 拉列表失败（app-server 忙/重启中）：下一拍再试
+      }
+      if (runGeneration !== generation) return;
+      let appeared = false;
+      for (const id of listed) if (pending.delete(id)) appeared = true;
+      if (!appeared) return;
+      deps.refresh();
+      if (pending.size === 0) stop();
+    } finally {
+      checking = false;
     }
-    let appeared = false;
-    for (const id of listed) if (pending.delete(id)) appeared = true;
-    if (!appeared) return;
-    deps.refresh();
-    if (pending.size === 0) stop();
   }
 
   return {

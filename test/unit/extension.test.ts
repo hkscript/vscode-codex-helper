@@ -776,6 +776,55 @@ describe('extension', () => {
     }
   });
 
+  it('coalesces_bursty_tab_changes_into_one_refresh', async () => {
+    vi.useFakeTimers();
+    try {
+      interceptWebviewView();
+      activate(makeContext() as never);
+
+      const onTabs = (
+        vscode.window.tabGroups.onDidChangeTabs as unknown as {
+          mock: { calls: Array<[(...args: unknown[]) => void]> };
+        }
+      ).mock.calls.at(-1)![0];
+
+      onTabs();
+      onTabs();
+      onTabs();
+      expect(refreshes).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(49);
+      expect(refreshes).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(refreshes).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resets_the_shared_app_server_when_the_binary_setting_changes', async () => {
+    interceptWebviewView();
+    activate(makeContext() as never);
+    const before = (await appServerChildren()).length;
+    registeredProvider!.resolveWebviewView(makeWebviewView());
+    await flush();
+    await answerListRequests([]);
+
+    const child = (await appServerChildren())[before]!;
+    expect(child.killed).toBe(false);
+
+    const listeners = (
+      vscode.workspace.onDidChangeConfiguration as unknown as {
+        mock: { calls: Array<[(event: { affectsConfiguration(section: string): boolean }) => void]> };
+      }
+    ).mock.calls.map((call) => call[0]);
+    for (const listener of listeners) {
+      listener({ affectsConfiguration: (section) => section === 'codexHelper.codexExecutable' });
+    }
+
+    expect(child.killed).toBe(true);
+  });
+
   // REQ: 新建会话 / Scenario: 会话进列表后自动出现在侧边栏（接线层）
   it('new_session_arms_a_watch_and_refreshes_once_it_shows_up', async () => {
     const intervalSpy = vi.spyOn(globalThis, 'setInterval');

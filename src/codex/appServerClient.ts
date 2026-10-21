@@ -10,9 +10,16 @@
 
 export interface ChildProcessLike {
   pid?: number;
-  stdin: { write(chunk: string): unknown } | null;
-  stdout: { on(event: 'data', listener: (chunk: unknown) => void): unknown } | null;
-  stderr?: { on(event: 'data', listener: (chunk: unknown) => void): unknown } | null;
+  stdin: {
+    write(chunk: string): unknown;
+    on?(event: 'error', listener: (error: unknown) => void): unknown;
+  } | null;
+  stdout: {
+    on(event: 'data' | 'error', listener: (value: unknown) => void): unknown;
+  } | null;
+  stderr?: {
+    on(event: 'data' | 'error', listener: (value: unknown) => void): unknown;
+  } | null;
   on(event: 'exit' | 'error' | string, listener: (...args: unknown[]) => void): unknown;
   kill(signal?: string): unknown;
 }
@@ -99,6 +106,20 @@ export function createAppServerClient(options: AppServerClientOptions): AppServe
     }
   }
 
+  function failChild(spawned: ChildProcessLike, reason: string): void {
+    if (child !== spawned) return;
+    child = null;
+    initialized = false;
+    startPromise = null;
+    buffer = '';
+    rejectAll(reason);
+    try {
+      spawned.kill();
+    } catch {
+      // 已经退出的进程 kill 失败没有后续动作
+    }
+  }
+
   function settle(message: JsonRpcMessage): void {
     const id = message.id;
     // Notifications (no `id`) are server chatter, never a reply to us.
@@ -172,10 +193,28 @@ export function createAppServerClient(options: AppServerClientOptions): AppServe
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       child = spawned;
-      spawned.stdout?.on('data', (chunk) => consume(String(chunk)));
-      spawned.stderr?.on('data', consumeStderr);
-      spawned.on('exit', (code) => rejectAll(`app-server exited with code ${String(code)}`));
-      spawned.on('error', (error) => rejectAll(`app-server failed: ${String(error)}`));
+      spawned.stdout?.on('data', (chunk) => {
+        if (child === spawned) consume(String(chunk));
+      });
+      spawned.stderr?.on('data', (chunk) => {
+        if (child === spawned) consumeStderr(chunk);
+      });
+      spawned.stdin?.on?.('error', (error) => {
+        failChild(spawned, `app-server stdin failed: ${String(error)}`);
+      });
+      spawned.stdout?.on('error', (error) => {
+        failChild(spawned, `app-server stdout failed: ${String(error)}`);
+      });
+      spawned.stderr?.on('error', (error) => {
+        if (child !== spawned) return;
+        options.onStderrLine?.(`app-server stderr failed: ${String(error)}`);
+      });
+      spawned.on('exit', (code) => {
+        failChild(spawned, `app-server exited with code ${String(code)}`);
+      });
+      spawned.on('error', (error) => {
+        failChild(spawned, `app-server failed: ${String(error)}`);
+      });
 
       send<{ userAgent?: string }>('initialize', {
         clientInfo,
@@ -184,15 +223,22 @@ export function createAppServerClient(options: AppServerClientOptions): AppServe
           : {}),
       }).then(
         (result) => {
+          if (child !== spawned) {
+            reject(new Error('app-server session was replaced before initialization completed'));
+            return;
+          }
           initialized = true;
           resolve({ userAgent: result?.userAgent ?? null });
         },
         (error: Error) => {
           // A failed handshake leaves no usable session: drop the process so a
           // later retry can spawn a fresh one.
-          startPromise = null;
-          spawned.kill();
-          child = null;
+          if (child === spawned) {
+            startPromise = null;
+            child = null;
+            buffer = '';
+            spawned.kill();
+          }
           reject(error);
         },
       );

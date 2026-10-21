@@ -28,7 +28,7 @@ function createHarness(pages: Record<string, { ids: string[]; next?: string }>) 
 }
 
 describe('sessionSource', () => {
-  it('fetch_replaces_both_batches_and_reports_only_the_first_active_page', async () => {
+  it('fetch_replaces_both_batches_and_reports_each_merged_active_page', async () => {
     const { source, fetched, ids } = createHarness({
       'active:': { ids: ['a1', 'a2'], next: 'c1' },
       'archived:': { ids: ['z1'] },
@@ -40,10 +40,13 @@ describe('sessionSource', () => {
     expect(ids(source.pages().archivedThreads)).toEqual(['z1']);
     expect(source.pages()).toMatchObject({ hasMore: true, archivedHasMore: false });
 
-    // 追加的分页不再喂给运行状态判定：只有首页刷新才算「最新列表」
+    // 追加分页后也要刷新运行状态判定，且回调看到的是合并后的未归档列表
     expect(await source.loadMore(false)).toBe(true);
     expect(ids(source.pages().threads)).toEqual(['a1', 'a2', 'a3']);
-    expect(fetched.map(ids)).toEqual([['a1', 'a2']]);
+    expect(fetched.map(ids)).toEqual([
+      ['a1', 'a2'],
+      ['a1', 'a2', 'a3'],
+    ]);
   });
 
   it('load_more_only_touches_the_requested_batch_and_skips_when_exhausted', async () => {
@@ -66,7 +69,7 @@ describe('sessionSource', () => {
   });
 
   it('load_all_drains_both_batches_and_stops_on_a_repeating_cursor', async () => {
-    const { source, ids } = createHarness({
+    const { source, fetched, ids } = createHarness({
       'active:': { ids: ['a1'], next: 'c1' },
       'active:c1': { ids: ['a2'], next: 'c2' },
       // 异常游标：服务端反复给同一个，不能无限翻
@@ -75,12 +78,153 @@ describe('sessionSource', () => {
       'archived:z-c1': { ids: ['z2'] },
     });
     await source.fetch();
+    fetched.length = 0;
 
     await source.loadAll();
 
     expect(ids(source.pages().threads)).toEqual(['a1', 'a2', 'a3']);
     expect(ids(source.pages().archivedThreads)).toEqual(['z1', 'z2']);
     expect(source.pages().archivedHasMore).toBe(false);
+    expect(fetched.map(ids)).toEqual([['a1', 'a2', 'a3']]);
+  });
+
+  it('serializes_fetch_behind_load_all_instead_of_using_conflicting_cursors', async () => {
+    const queries: ThreadListQuery[] = [];
+    let releaseNextPage!: () => void;
+    const nextPageGate = new Promise<void>((resolve) => {
+      releaseNextPage = resolve;
+    });
+    let activeRootCalls = 0;
+    const source = createSessionSource({
+      api: () => ({
+        listThreads: async (query: ThreadListQuery = {}): Promise<ThreadListResponse> => {
+          queries.push(query);
+          if (query.cursor === 'a-next') {
+            await nextPageGate;
+            return { data: [makeThread({ id: 'a2' })], nextCursor: null };
+          }
+          if (query.archived) return { data: [], nextCursor: null };
+          activeRootCalls += 1;
+          return activeRootCalls === 1
+            ? { data: [makeThread({ id: 'a1' })], nextCursor: 'a-next' }
+            : { data: [makeThread({ id: 'fresh' })], nextCursor: null };
+        },
+        listItems: async () => ({ data: [], nextCursor: null }),
+      }),
+      workspaceCwd: () => '/repo',
+    });
+
+    await source.fetch();
+    queries.length = 0;
+
+    const loadAll = source.loadAll();
+    await Promise.resolve();
+    const refresh = source.fetch();
+    await Promise.resolve();
+
+    // loadAll 的首个请求还卡在闸门里时，fetch 不得抢跑并重新使用 cursor=null。
+    expect(queries).toEqual([{ cwd: '/repo', cursor: 'a-next' }]);
+
+    releaseNextPage();
+    await Promise.all([loadAll, refresh]);
+    expect(queries).toEqual([
+      { cwd: '/repo', cursor: 'a-next' },
+      { cwd: '/repo', cursor: null },
+      { cwd: '/repo', archived: true },
+    ]);
+    expect(source.pages().threads.map((thread) => thread.id)).toEqual(['fresh']);
+  });
+
+  it('deduplicates_concurrent_load_more_for_the_same_batch_and_cursor', async () => {
+    const { source, queries, ids } = createHarness({
+      'active:': { ids: ['a1'], next: 'c1' },
+      'archived:': { ids: [] },
+      'active:c1': { ids: ['a2'] },
+    });
+    await source.fetch();
+    queries.length = 0;
+
+    const first = source.loadMore(false);
+    const second = source.loadMore(false);
+
+    expect(await second).toBe(false);
+    expect(await first).toBe(true);
+    expect(queries).toEqual([{ cwd: '/repo', cursor: 'c1' }]);
+    expect(ids(source.pages().threads)).toEqual(['a1', 'a2']);
+  });
+
+  it('deduplicates_appended_threads_by_id', async () => {
+    const { source, ids } = createHarness({
+      'active:': { ids: ['a1', 'a2'], next: 'c1' },
+      'archived:': { ids: ['z1'], next: 'z-c1' },
+      'active:c1': { ids: ['a2', 'a3'] },
+      'archived:z-c1': { ids: ['z1', 'z2'] },
+    });
+    await source.fetch();
+
+    await source.loadMore(false);
+    await source.loadMore(true);
+
+    expect(ids(source.pages().threads)).toEqual(['a1', 'a2', 'a3']);
+    expect(ids(source.pages().archivedThreads)).toEqual(['z1', 'z2']);
+  });
+
+  it('uses_a_single_selected_cwd_for_subsequent_thread_lists', async () => {
+    const { source, queries } = createHarness({
+      'active:': { ids: ['a1'], next: 'c1' },
+      'archived:': { ids: [] },
+      'active:c1': { ids: ['a2'] },
+    });
+    await source.fetch();
+    queries.length = 0;
+
+    await source.setCwdFilter(['/selected']);
+    await source.loadMore(false);
+
+    expect(queries).toEqual([{ cwd: '/selected', cursor: 'c1' }]);
+
+    queries.length = 0;
+    await source.setCwdFilter(['/one', '/two']);
+    await source.fetch();
+
+    expect(queries).toEqual([
+      { cwd: '/repo', cursor: null },
+      { cwd: '/repo', archived: true },
+    ]);
+  });
+
+  it('keeps_an_unfiltered_directory_catalog_when_the_list_is_server_filtered', async () => {
+    const source = createSessionSource({
+      api: () => ({
+        listThreads: async (query: ThreadListQuery = {}): Promise<ThreadListResponse> => {
+          if (query.archived) return { data: [], nextCursor: null };
+          if (query.cwd === '/selected') {
+            return {
+              data: [makeThread({ id: 'selected', cwd: '/selected' })],
+              nextCursor: null,
+            };
+          }
+          return {
+            data: [
+              makeThread({ id: 'selected', cwd: '/selected' }),
+              makeThread({ id: 'other', cwd: '/other' }),
+            ],
+            nextCursor: null,
+          };
+        },
+        listItems: async () => ({ data: [], nextCursor: null }),
+      }),
+      workspaceCwd: () => '/repo',
+    });
+
+    source.setCwdFilter(['/selected']);
+    await source.fetch();
+
+    expect(source.pages().threads.map((thread) => thread.id)).toEqual(['selected']);
+    expect(source.pages().cwdThreads.map((thread) => thread.id).sort()).toEqual([
+      'other',
+      'selected',
+    ]);
   });
 
   it('preview_reads_the_head_ascending_and_the_tail_descending', async () => {

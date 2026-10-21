@@ -11,6 +11,7 @@ export interface SessionRowData {
   label: string;
   pinned: boolean;
   archived: boolean;
+  running: boolean;
   updatedAt: number | null;
   /** 宿主按当前时刻格式化好的相对时间。 */
   time: string;
@@ -47,6 +48,11 @@ export interface TimesMessage {
   times: Record<string, string>;
 }
 
+export interface RunningMessage {
+  type: 'running';
+  ids: string[];
+}
+
 export interface PreviewMessage {
   type: 'preview';
   /** 原样回传请求里的 requestId：webview 只认最近一次悬停发出的那个。 */
@@ -60,7 +66,12 @@ export interface FocusSearchMessage {
   type: 'focusSearch';
 }
 
-export type HostMessage = RenderMessage | TimesMessage | PreviewMessage | FocusSearchMessage;
+export type HostMessage =
+  | RenderMessage
+  | TimesMessage
+  | RunningMessage
+  | PreviewMessage
+  | FocusSearchMessage;
 
 export type SessionAction = 'rename' | 'pin' | 'unpin' | 'archive' | 'unarchive' | 'delete';
 

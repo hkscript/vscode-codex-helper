@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { Logger } from '../../src/log';
 import type { UriLike } from '../../src/codex/types';
@@ -33,12 +34,12 @@ function snapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
   };
 }
 
-function makeView() {
+function makeView(visible = true) {
   const messages: Array<Record<string, unknown>> = [];
   let receive: ((message: unknown) => void) | undefined;
   const visibilityListeners = new Set<() => void>();
   const view = {
-    visible: true,
+    visible,
     onDidChangeVisibility: (listener: () => void) => {
       visibilityListeners.add(listener);
       return { dispose: () => visibilityListeners.delete(listener) };
@@ -83,7 +84,9 @@ async function resolvedProvider(
   options: {
     initialCwdFilter?: string[];
     saveCwdFilter?: (next: string[]) => Promise<void>;
+    onCwdFilterChange?: (next: string[]) => Promise<void> | void;
     logger?: Logger;
+    visible?: boolean;
   } = {},
 ) {
   const fetch = vi.fn(async () => undefined);
@@ -91,13 +94,14 @@ async function resolvedProvider(
     assets,
     initialCwdFilter: options.initialCwdFilter,
     saveCwdFilter: options.saveCwdFilter ?? vi.fn(async () => undefined),
+    onCwdFilterChange: options.onCwdFilterChange,
     fetch,
     loadAll: vi.fn(async () => undefined),
-    loadPreview: vi.fn(async () => ({
+    loadPreview: vi.fn(async (_threadId: string) => ({
       userMessages: ['第一次输入', '第二次输入', '最后一次输入'],
       lastReply: '模型最后回复',
     })),
-    snapshot: () => snapshot(overrides),
+    snapshot: vi.fn(() => snapshot(overrides)),
     loadMore: vi.fn(async () => undefined),
     openSession: vi.fn(async () => undefined),
     newSession: vi.fn(async () => undefined),
@@ -111,7 +115,7 @@ async function resolvedProvider(
     logger: options.logger,
   };
   const provider = createSessionWebviewProvider(deps);
-  const fake = makeView();
+  const fake = makeView(options.visible);
   provider.resolveWebviewView(fake.view as never);
   await flush();
   await flush();
@@ -152,6 +156,28 @@ describe('sessionWebviewProvider', () => {
     expect(nonce(first.view.webview.html)).not.toBe(nonce(second.view.webview.html));
   });
 
+  it('keeps_directory_filters_on_the_left_and_the_search_icon_on_the_far_right', async () => {
+    const { view } = await resolvedProvider();
+    const html = view.webview.html;
+    const ids = ['cwd-filter', 'cwd-chip', 'search', 'clear-search', 'search-icon'];
+    const positions = ids.map((id) => html.indexOf(`id="${id}"`));
+
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
+    expect(html).toContain(
+      '<button id="search-icon" class="search-icon" title="聚焦搜索框" aria-label="聚焦搜索框"></button>',
+    );
+
+    const css = readFileSync(
+      new URL('../../src/ui/webview/sidebar.css', import.meta.url),
+      'utf8',
+    );
+    expect(css).toMatch(/\.search-row input\s*\{[^}]*flex:\s*1 1 0/s);
+    expect(css).toMatch(/\.search-icon\s*\{[^}]*flex:\s*none/s);
+    expect(css).toMatch(/\.search-icon\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s);
+    expect(css).toMatch(/\.chip\s*\{[^}]*max-width:\s*60%/s);
+  });
+
   it('renders_inline_search_groups_directory_options_and_relative_times', async () => {
     const { view, lastRender } = await resolvedProvider();
 
@@ -162,10 +188,15 @@ describe('sessionWebviewProvider', () => {
       { path: '/work/alpha', label: 'alpha', count: 2 },
       { path: '/work/beta', label: 'beta', count: 1 },
     ]);
-    const groups = payload.groups as Array<{ id: string; sessions: Array<{ id: string; time: string }> }>;
+    const groups = payload.groups as Array<{
+      id: string;
+      sessions: Array<{ id: string; time: string; running: boolean }>;
+    }>;
     const recent = groups.find((group) => group.id === 'recent')!;
     expect(recent.sessions.map((session) => session.id)).toEqual(['t1', 't2']);
     expect(recent.sessions[0]!.time).toBe('1m');
+    expect(recent.sessions.find((session) => session.id === 't1')?.running).toBe(true);
+    expect(recent.sessions.find((session) => session.id === 't2')?.running).toBe(false);
   });
 
   it('filters_locally_as_the_user_types', async () => {
@@ -177,6 +208,63 @@ describe('sessionWebviewProvider', () => {
     const groups = payload.groups as Array<{ sessions: Array<{ id: string }> }>;
     expect(payload.filter).toBe('价格');
     expect(groups.flatMap((group) => group.sessions.map((session) => session.id))).toEqual(['t1']);
+  });
+
+  it('keeps_all_directory_options_when_the_visible_list_is_server_filtered', async () => {
+    const { lastRender } = await resolvedProvider({
+      threads: [makeThread({ id: 't1', name: '价格排查', cwd: '/work/alpha', updatedAt: 20 })],
+      cwdThreads: [
+        makeThread({ id: 't1', name: '价格排查', cwd: '/work/alpha', updatedAt: 20 }),
+        makeThread({ id: 't2', name: '登录重构', cwd: '/work/beta', updatedAt: 10 }),
+      ],
+    });
+
+    expect(lastRender()!.cwds).toEqual([
+      { path: '/work/alpha', label: 'alpha', count: 2 },
+      { path: '/work/beta', label: 'beta', count: 1 },
+    ]);
+  });
+
+  it('updates_running_rows_without_rebuilding_the_whole_render_payload', async () => {
+    const { provider, messages } = await resolvedProvider();
+    const rendersBefore = messages.filter((message) => message.type === 'render').length;
+
+    provider.setRunning(new Set(['t2']));
+    await flush();
+
+    expect(messages.filter((message) => message.type === 'render')).toHaveLength(rendersBefore);
+    expect(messages.at(-1)).toMatchObject({ type: 'running', ids: ['t2'] });
+  });
+
+  it('sends_only_protocol_session_fields_while_filtering_by_preview_on_the_host', async () => {
+    const { send, lastRender } = await resolvedProvider({
+      threads: [
+        makeThread({
+          id: 't1',
+          name: '价格排查',
+          preview: '只存在于宿主侧的搜索关键词',
+          cwd: '/work/alpha',
+          updatedAt: 20,
+        }),
+      ],
+    });
+
+    await send({ type: 'setFilter', value: '宿主侧' });
+
+    const groups = lastRender()!.groups as Array<{
+      sessions: Array<Record<string, unknown>>;
+    }>;
+    expect(groups.flatMap((group) => group.sessions)).toEqual([
+      {
+        id: 't1',
+        label: '价格排查',
+        pinned: false,
+        archived: false,
+        running: true,
+        updatedAt: 20,
+        time: '1m',
+      },
+    ]);
   });
 
   it('loads_all_remaining_pages_once_a_filter_is_active', async () => {
@@ -203,11 +291,10 @@ describe('sessionWebviewProvider', () => {
     await send({ type: 'toggleCwd', cwd: '/work/beta' });
 
     const payload = lastRender()!;
-    const groups = payload.groups as Array<{ sessions: Array<{ id: string; cwd: string }> }>;
+    const groups = payload.groups as Array<{ sessions: Array<{ id: string }> }>;
     const visible = groups.flatMap((group) => group.sessions);
     expect(payload.cwdFilter).toEqual(['/work/beta']);
     expect(visible.map((session) => session.id)).toEqual(['t2']);
-    expect(visible[0]!.cwd).toBe('/work/beta');
   });
 
   it('supports_selecting_multiple_working_directories', async () => {
@@ -247,6 +334,56 @@ describe('sessionWebviewProvider', () => {
 
     await send({ type: 'clearCwd' });
     expect(saveCwdFilter).toHaveBeenLastCalledWith([]);
+  });
+
+  it('awaits_the_cwd_change_callback_before_reloading_with_a_copy_of_the_filter', async () => {
+    let release!: () => void;
+    let received: string[] | undefined;
+    const onCwdFilterChange = vi.fn(
+      (next: string[]) => {
+        received = [...next];
+        next.push('/mutated-by-callback');
+        return new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
+    );
+    const { send, deps, lastRender } = await resolvedProvider(
+      { hasMore: true },
+      { onCwdFilterChange },
+    );
+    const initialFetches = deps.fetch.mock.calls.length;
+
+    await send({ type: 'toggleCwd', cwd: '/work/beta' });
+
+    expect(received).toEqual(['/work/beta']);
+    expect(lastRender()!.cwdFilter).toEqual(['/work/beta']);
+    expect(deps.fetch).toHaveBeenCalledTimes(initialFetches);
+    expect(deps.loadAll).not.toHaveBeenCalled();
+    expect(lastRender()!.cwdFilter).toEqual(['/work/beta']);
+
+    release();
+    await flush();
+    await flush();
+
+    expect(deps.fetch).toHaveBeenCalledTimes(initialFetches + 1);
+  });
+
+  it('notifies_an_empty_cwd_filter_before_reloading_when_filters_are_cleared', async () => {
+    const onCwdFilterChange = vi.fn(async () => undefined);
+    const { provider, deps, lastRender } = await resolvedProvider(
+      { hasMore: true },
+      { initialCwdFilter: ['/work/beta'], onCwdFilterChange },
+    );
+    const initialFetches = deps.fetch.mock.calls.length;
+
+    provider.clearFilters();
+    await flush();
+    await flush();
+
+    expect(onCwdFilterChange).toHaveBeenCalledWith([]);
+    expect(lastRender()!.cwdFilter).toEqual([]);
+    expect(deps.fetch).toHaveBeenCalledTimes(initialFetches + 1);
   });
 
   it('keeps_group_expansion_across_filter_renders', async () => {
@@ -327,6 +464,38 @@ describe('sessionWebviewProvider', () => {
     });
     // 同一个 updatedAt 只读一次会话
     expect(deps.loadPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds_the_preview_cache_and_refreshes_entries_used_again', async () => {
+    const { send, deps } = await resolvedProvider();
+
+    for (let index = 0; index < 200; index += 1) {
+      await send({ type: 'preview', sessionId: `s${index}`, updatedAt: index, requestId: index });
+    }
+    // s0 再次命中后应移到队尾，不能因为最初创建得早就先被淘汰。
+    await send({ type: 'preview', sessionId: 's0', updatedAt: 0, requestId: 200 });
+    await send({ type: 'preview', sessionId: 's200', updatedAt: 200, requestId: 201 });
+    await send({ type: 'preview', sessionId: 's0', updatedAt: 0, requestId: 202 });
+    await send({ type: 'preview', sessionId: 's1', updatedAt: 1, requestId: 203 });
+
+    expect(deps.loadPreview).toHaveBeenCalledTimes(202);
+    expect(
+      deps.loadPreview.mock.calls.filter(([sessionId]) => sessionId === 's0'),
+    ).toHaveLength(1);
+    expect(
+      deps.loadPreview.mock.calls.filter(([sessionId]) => sessionId === 's1'),
+    ).toHaveLength(2);
+  });
+
+  it('warns_instead_of_leaving_post_message_rejections_unhandled', async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const { provider, view } = await resolvedProvider({}, { logger });
+    vi.spyOn(view.webview, 'postMessage').mockRejectedValueOnce(new Error('view disposed'));
+
+    provider.focusSearch();
+    await flush();
+
+    expect(logger.warn).toHaveBeenCalledWith('发送 webview 消息失败：view disposed');
   });
 
   it('shows_a_retryable_error_when_loading_fails', async () => {
@@ -463,6 +632,34 @@ describe('sessionWebviewProvider', () => {
     await setVisible(true);
     expect(messages.length).toBe(posted + 2);
     expect(messages.at(-1)!.type).toBe('times');
+  });
+
+  it('updates_relative_times_from_the_last_render_without_rebuilding_groups', async () => {
+    const { send, deps, messages } = await resolvedProvider();
+    deps.snapshot.mockClear();
+
+    await send({ type: 'tick' });
+
+    expect(deps.snapshot).not.toHaveBeenCalled();
+    expect(messages.at(-1)).toEqual({
+      type: 'times',
+      times: { t1: '1m', t2: '1m', z1: '1m' },
+    });
+  });
+
+  it('falls_back_to_a_snapshot_for_times_when_nothing_has_rendered_yet', async () => {
+    const { view, send, deps, messages } = await resolvedProvider({}, { visible: false });
+    deps.snapshot.mockClear();
+
+    // 不触发可见性回调，直接让下一次 tick 先遇到“有视图但没有渲染缓存”的状态。
+    view.visible = true;
+    await send({ type: 'tick' });
+
+    expect(deps.snapshot).toHaveBeenCalledTimes(1);
+    expect(messages.at(-1)).toEqual({
+      type: 'times',
+      times: { t1: '1m', t2: '1m', z1: '1m' },
+    });
   });
 
   it('defers_background_reloads_until_the_view_is_visible_again', async () => {

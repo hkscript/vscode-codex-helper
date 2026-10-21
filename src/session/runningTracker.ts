@@ -30,6 +30,8 @@ export interface RunningTrackerDeps {
   onChange(runningIds: Set<string>): void;
   now?(): number;
   debounceMs?: number;
+  /** Upper bound on how long continuous events can postpone a recompute. */
+  maxWaitMs?: number;
   /** `0` disables the polling fallback. */
   pollSeconds?: number;
   staleSeconds?: number;
@@ -38,6 +40,8 @@ export interface RunningTrackerDeps {
 export interface RunningTracker {
   /** Feed the latest thread list; schedules a debounced recompute. */
   update(threads: Thread[]): void;
+  /** Recompute from the current thread list with a fresh rollout scan. */
+  refresh(): void;
   snapshot(): Set<string>;
   /**
    * 结果只给侧边栏看：`false` 期间的 rollout 写入、轮询和 `update` 只记一笔不重算
@@ -48,6 +52,7 @@ export interface RunningTracker {
 }
 
 export const DEFAULT_DEBOUNCE_MS = 300;
+export const DEFAULT_MAX_WAIT_MS = 1500;
 export const DEFAULT_POLL_SECONDS = 5;
 /** Keeps one burst of `thread/turns/list` from saturating the app-server. */
 const MAX_CONCURRENT_QUERIES = 4;
@@ -60,6 +65,7 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
 
 export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
   const debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+  const maxWaitMs = deps.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
   const pollMs = (deps.pollSeconds ?? DEFAULT_POLL_SECONDS) * 1000;
   const staleSeconds = deps.staleSeconds ?? DEFAULT_STALE_SECONDS;
   const now = deps.now ?? (() => Date.now());
@@ -72,6 +78,7 @@ export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
   let active = true;
   let missedWhileInactive = false;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let maxWaitTimer: ReturnType<typeof setTimeout> | undefined;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let disposed = false;
 
@@ -105,6 +112,18 @@ export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
     }
   }
 
+  function clearScheduledRecompute(): void {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = undefined;
+    if (maxWaitTimer) clearTimeout(maxWaitTimer);
+    maxWaitTimer = undefined;
+  }
+
+  function runScheduledRecompute(): void {
+    clearScheduledRecompute();
+    void recompute();
+  }
+
   function schedule(): void {
     if (disposed) return;
     if (!active) {
@@ -112,10 +131,10 @@ export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
       return;
     }
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      debounceTimer = undefined;
-      void recompute();
-    }, debounceMs);
+    debounceTimer = setTimeout(runScheduledRecompute, debounceMs);
+    if (!maxWaitTimer) {
+      maxWaitTimer = setTimeout(runScheduledRecompute, maxWaitMs);
+    }
   }
 
   async function recompute(): Promise<void> {
@@ -177,6 +196,12 @@ export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
       schedule();
     },
 
+    refresh(): void {
+      if (disposed) return;
+      needsFreshScan = true;
+      schedule();
+    },
+
     snapshot(): Set<string> {
       return new Set(running);
     },
@@ -186,9 +211,8 @@ export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
       active = next;
       if (!active) {
         // 已经排上、还没开跑的那一拍也挪到重新可见时再算
-        if (debounceTimer) {
-          clearTimeout(debounceTimer);
-          debounceTimer = undefined;
+        if (debounceTimer || maxWaitTimer) {
+          clearScheduledRecompute();
           missedWhileInactive = true;
         }
         return;
@@ -200,8 +224,7 @@ export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
 
     dispose(): void {
       disposed = true;
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = undefined;
+      clearScheduledRecompute();
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = undefined;
       for (const handle of watchers.values()) {

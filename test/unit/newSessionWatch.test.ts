@@ -10,6 +10,7 @@ interface Harness {
   listCalls: number;
   /** 手动触发一次轮询（定时器已经被取消时什么都不做）。 */
   tick(): Promise<void>;
+  deferNextList(): { promise: Promise<string[]>; resolve(ids: string[]): void };
   scheduled: boolean;
   setListed(ids: string[]): void;
   setOpenTabs(ids: string[]): void;
@@ -24,6 +25,7 @@ function createHarness(): Harness {
   let open = new Set<string>();
   let now = 0;
   let failList = false;
+  let deferredList: { promise: Promise<string[]>; resolve(ids: string[]): void } | undefined;
   let scheduledFn: (() => void) | undefined;
   const state = {
     refreshes: 0,
@@ -32,6 +34,9 @@ function createHarness(): Harness {
   const watch = createNewSessionWatch({
     listThreadIds: async () => {
       state.listCalls += 1;
+      const deferred = deferredList;
+      deferredList = undefined;
+      if (deferred) return deferred.promise;
       if (failList) throw new Error('app-server 忙');
       return listed;
     },
@@ -61,6 +66,14 @@ function createHarness(): Harness {
     },
     async tick() {
       await scheduledFn?.();
+    },
+    deferNextList() {
+      let resolve!: (ids: string[]) => void;
+      const promise = new Promise<string[]>((done) => {
+        resolve = done;
+      });
+      deferredList = { promise, resolve };
+      return deferredList;
     },
     setListed(ids) {
       listed = ids;
@@ -147,6 +160,38 @@ describe('newSessionWatch', () => {
     harness.setListed(['t1']);
     await harness.tick();
     expect(harness.refreshes).toBe(1);
+  });
+
+  it('does_not_start_another_list_request_while_one_is_in_flight', async () => {
+    const harness = createHarness();
+    harness.setOpenTabs(['t1']);
+    const firstList = harness.deferNextList();
+    harness.watch('t1');
+
+    await harness.tick();
+    await harness.tick();
+    expect(harness.listCalls).toBe(1);
+
+    firstList.resolve([]);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await harness.tick();
+    expect(harness.listCalls).toBe(2);
+  });
+
+  it('does_not_refresh_when_a_stopped_watch_receives_a_late_result', async () => {
+    const harness = createHarness();
+    harness.setOpenTabs(['t1']);
+    const firstList = harness.deferNextList();
+    harness.watch('t1');
+
+    await harness.tick();
+    harness.stop();
+    firstList.resolve(['t1']);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.listCalls).toBe(1);
+    expect(harness.refreshes).toBe(0);
+    expect(harness.scheduled).toBe(false);
   });
 
   // REQ: 新建会话 / Scenario: 连着建两个会话时两个都要等

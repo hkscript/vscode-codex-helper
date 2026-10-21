@@ -134,6 +134,42 @@ describe('appServerClient', () => {
     expect(client.pendingCount()).toBe(0);
   });
 
+  it('spawns_a_replacement_after_the_initialized_child_exits', async () => {
+    const { fake, client, child } = await started();
+
+    child.emit('exit', 1, null);
+    expect(client.pid()).toBeUndefined();
+
+    const pending = client.request<{ data: string[] }>('thread/loaded/list');
+    expect(fake.children).toHaveLength(2);
+    const replacement = fake.children[1]!;
+
+    pushMessage(replacement, { id: 2, result: { userAgent: 'codex/0.0.1' } });
+    await Promise.resolve();
+    await Promise.resolve();
+    pushMessage(replacement, { id: 3, result: { data: ['thread-1'] } });
+
+    await expect(pending).resolves.toEqual({ data: ['thread-1'] });
+    expect(client.pid()).toBe(replacement.pid);
+  });
+
+  it('ignores_a_late_exit_from_a_replaced_child', async () => {
+    const { fake, client, child } = await started();
+
+    child.emit('exit', 1, null);
+    const pending = client.request<{ data: string[] }>('thread/loaded/list');
+    const replacement = fake.children[1]!;
+    pushMessage(replacement, { id: 2, result: { userAgent: 'codex/0.0.1' } });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    child.emit('exit', 1, null);
+    expect(client.pid()).toBe(replacement.pid);
+
+    pushMessage(replacement, { id: 3, result: { data: ['thread-1'] } });
+    await expect(pending).resolves.toEqual({ data: ['thread-1'] });
+  });
+
   it('dispose_kills_process_and_rejects_pending', async () => {
     const { client, child } = await started();
 
