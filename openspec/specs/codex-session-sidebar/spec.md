@@ -306,6 +306,20 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 
 在支持 `/proc` 的平台上，插件 SHALL 通过扫描存活进程持有的文件描述符，得出「rollout 文件 → 持有它的 codex 进程」映射；扫描过程中任何单个进程或描述符读取失败 SHALL 被跳过，不得中断整轮扫描。
 
+扫描 SHALL 全程异步、并发读取数受限（同一时刻最多 8 个），不得阻塞扩展宿主；结果按 `/proc` 列举顺序合并，与读取完成先后无关。运行状态追踪与写锁预检 SHALL 共用同一个扫描器：进行中的扫描被并发调用方共享；后台重算可复用 1.5 秒内的缓存结果，而归档 / 取消归档 / 删除前的写锁预检 SHALL 总是重新扫描。失败的扫描 SHALL NOT 进入缓存。不支持 `/proc` 的平台 SHALL 不扫描并返回空结果（走时间阈值降级）。
+
+#### Scenario: 写锁预检不复用缓存
+
+- **GIVEN** 1 秒前刚完成一轮扫描，结果显示会话 `t1` 被其他进程持有，随后该进程退出
+- **WHEN** 用户归档 `t1`
+- **THEN** 预检重新扫描，发现 `t1` 已无人持有，照常发出归档请求
+
+#### Scenario: 并发调用共享同一轮扫描
+
+- **GIVEN** 一轮扫描正在进行
+- **WHEN** 后台重算再次请求扫描结果
+- **THEN** 不发起第二轮扫描，直接等待进行中的那一轮
+
 #### Scenario: 扫描出持有 rollout 文件的 codex 进程
 
 - **GIVEN** 存在进程 `12990`，其 `cmdline` 同时含 `codex` 与 `app-server`
@@ -327,7 +341,7 @@ TBD - created by archiving change add-codex-session-sidebar. Update Purpose afte
 
 ### Requirement: 运行状态自动刷新
 
-插件 SHALL 监听候选会话 rollout 文件的变化，在去抖窗口结束后重新计算运行集合；重入的重算 SHALL 只采用最新一轮的结果；只有当运行集合发生变化时才 SHALL 通知树刷新。监听建立失败时 SHALL 退化为定时轮询。插件停用时 SHALL 释放全部监听与定时器。
+插件 SHALL 监听候选会话 rollout 文件的变化，在去抖窗口结束后重新计算运行集合；重入的重算 SHALL 只采用最新一轮的结果；只有当运行集合发生变化时才 SHALL 通知树刷新。监听建立失败时 SHALL 退化为定时轮询。插件停用时 SHALL 释放全部监听与定时器。侧边栏不可见时追踪器 SHALL 暂停重算（只记下错过的变化，保留监听），重新可见时若有错过的变化 SHALL 补算一次。扫描在追踪器释放后或被更新一轮取代后才返回时，其结果 SHALL 被丢弃；扫描失败时 SHALL 保持上一轮的运行集合。
 
 #### Scenario: rollout 文件写入后自动重算并刷新
 
@@ -826,3 +840,30 @@ Codex 只在 `resolveCustomEditor` 那一刻写标签标题，而 VS Code 没有
 - **WHEN** 删除 `t1` 成功
 - **THEN** 只有 `t1` 的标签被关闭，`t2` 的标签保持打开
 - **AND** 列表刷新
+
+### Requirement: 侧边栏刷新调度
+
+一轮会话拉取未结束时再收到的刷新请求 SHALL NOT 并发发起第二轮，而 SHALL 在当前轮结束后统一补拉一轮，所有调用方等到该轮完成；当前轮已结束后才到达的请求 SHALL 发起新一轮。侧边栏不可见时 SHALL 跳过重绘与相对时间更新，定时自动刷新只记为过期，重新可见时 SHALL 补做一次。`codexHelper.autoRefreshSeconds` 修改后 SHALL 立即生效，无需重载窗口。
+
+#### Scenario: 重叠刷新被合并
+
+- **GIVEN** 一轮会话拉取正在进行
+- **WHEN** 重命名完成后又请求了 2 次刷新
+- **THEN** 当前轮结束后只再拉取 1 轮，且 2 个请求都在这一轮完成后才兑现
+
+#### Scenario: 隐藏时的自动刷新延迟到可见
+
+- **GIVEN** 侧边栏不可见且开启了自动刷新
+- **WHEN** 自动刷新定时器到点
+- **THEN** 不拉取会话列表；侧边栏重新可见时拉取一次
+
+### Requirement: 诊断日志与侧边栏资源
+
+插件 SHALL 把诊断日志写入名为「Codex Helper」的输出通道，不得写到 `console`；通道关闭后的写入 SHALL 被忽略而不抛错。侧边栏 Webview 的样式与脚本 SHALL 作为打包产物（`dist/webview/`）经 `asWebviewUri` 加载，内容安全策略 SHALL NOT 含 `'unsafe-inline'`，脚本 SHALL 带 nonce。
+
+#### Scenario: 插件停用后迟到的 app-server 输出不抛错
+
+- **GIVEN** 插件已停用，输出通道已关闭
+- **WHEN** 被终止的 app-server 又写出一行 stderr
+- **THEN** 该行被丢弃，扩展宿主不出现未捕获异常
+
