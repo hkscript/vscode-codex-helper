@@ -3,7 +3,7 @@ import { createWriterLockProbe } from '../../src/session/writerLock';
 
 describe('writerLock', () => {
   function makeDeps(held: Map<string, number> | null, ownPid: number | undefined) {
-    const scanHeldRollouts = vi.fn(() => held);
+    const scanHeldRollouts = vi.fn(async () => held);
     const probe = createWriterLockProbe({ scanHeldRollouts, ownPid: () => ownPid });
     return { probe, scanHeldRollouts };
   }
@@ -45,12 +45,24 @@ describe('writerLock', () => {
   // 探测本身失败（/proc 读不到）时不猜，放行
   it('passes_when_the_scan_throws', async () => {
     const probe = createWriterLockProbe({
-      scanHeldRollouts: () => {
+      scanHeldRollouts: async () => {
         throw new Error('EPERM: /proc');
       },
       ownPid: () => 4242,
     });
 
     await expect(probe('t1')).resolves.toBe(false);
+  });
+
+  // 每次点击都现扫一轮：同一个探测器连着两次预检，第二次必须看到这之间的变化
+  it('scans_on_every_probe', async () => {
+    let held = new Map<string, number>();
+    const scanHeldRollouts = vi.fn(async () => held);
+    const probe = createWriterLockProbe({ scanHeldRollouts, ownPid: () => 4242 });
+
+    await expect(probe('t1')).resolves.toBe(false);
+    held = new Map([['t1', 30157]]);
+    await expect(probe('t1')).resolves.toBe(true);
+    expect(scanHeldRollouts).toHaveBeenCalledTimes(2);
   });
 });

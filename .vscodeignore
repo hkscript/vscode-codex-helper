@@ -1,7 +1,9 @@
-# 源码、测试与构建脚本：运行时只需要 dist/extension.js
+# 源码、测试与构建脚本：运行时只需要 dist/（extension.js 与 webview/）
 src/**
 test/**
 esbuild.mjs
+esbuild.webview.mjs
+esbuild.webview.d.mts
 tsconfig.json
 vitest.config.ts
 
@@ -26,3 +28,6 @@ resources/icon.gen.py
 **/*.map
 .gitignore
 *.vsix
+
+# pnpm package 的打包产物目录
+releases/**

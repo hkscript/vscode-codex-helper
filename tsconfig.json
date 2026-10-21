@@ -23,5 +23,8 @@
   "include": [
     "src/**/*.ts",
     "test/**/*.ts"
+  ],
+  "exclude": [
+    "src/ui/webview/**"
   ]
 }

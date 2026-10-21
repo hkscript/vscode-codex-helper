@@ -7,15 +7,21 @@ import type {
   Thread,
   UriLike,
 } from '../codex/types';
+import type { Logger } from '../log';
 import { buildSessionGroups } from '../session/sessionStore';
 import type { SessionPreview } from '../session/sessionPreview';
-import { sessionWebviewHtml } from './sessionWebviewHtml';
 import {
-  activeSessionCount,
+  SESSION_WEBVIEW_DIR,
+  SESSION_WEBVIEW_SCRIPT,
+  SESSION_WEBVIEW_STYLE,
+  sessionWebviewHtml,
+} from './sessionWebviewHtml';
+import {
   collectCwdOptions,
   formatRelativeTime,
   type CwdOption,
 } from './sessionViewModel';
+import type { HostMessage } from './webview/protocol';
 
 /**
  * Raw data used to render the sidebar. The provider owns the view-only state
@@ -39,7 +45,29 @@ export interface SessionOpenRequest {
   archived: boolean;
 }
 
+/** esbuild 打好的 webview 脚本 / 样式，都在扩展自己的安装目录里。 */
+export interface SessionWebviewAssets {
+  /** `localResourceRoots` 只放行这一个目录。 */
+  root: vscode.Uri;
+  script: vscode.Uri;
+  style: vscode.Uri;
+}
+
+/** `joinPath` 由调用方传入（扩展里是 `vscode.Uri.joinPath`），这个模块不在运行时依赖 vscode。 */
+export function sessionWebviewAssets(
+  extensionUri: vscode.Uri,
+  joinPath: (base: vscode.Uri, ...segments: string[]) => vscode.Uri,
+): SessionWebviewAssets {
+  const root = joinPath(extensionUri, ...SESSION_WEBVIEW_DIR);
+  return {
+    root,
+    script: joinPath(root, SESSION_WEBVIEW_SCRIPT),
+    style: joinPath(root, SESSION_WEBVIEW_STYLE),
+  };
+}
+
 export interface SessionWebviewDeps {
+  assets: SessionWebviewAssets;
   /** 上次在这个 workspace 里勾选的目录。 */
   initialCwdFilter?: string[];
   /** 目录选择变化时写回 workspaceState（失败不影响界面）。 */
@@ -61,14 +89,24 @@ export interface SessionWebviewDeps {
   unarchiveSession(sessionId: string): Promise<void> | void;
   deleteSession(sessionId: string): Promise<void> | void;
   now?(): number;
+  /** 诊断日志（扩展里接 Output 面板的「Codex Helper」通道）；不给就不记。 */
+  logger?: Logger;
 }
 
 export interface SessionWebviewProvider {
   resolveWebviewView(view: vscode.WebviewView): void;
   /** Re-render from the current snapshot without touching the app-server. */
   refresh(): void;
-  /** Fetch fresh session data, then re-render. */
+  /**
+   * Fetch fresh session data, then re-render. 一轮还没拉完时再来的请求不并发起第二轮，
+   * 而是在它结束后统一补拉一轮（调用方可能刚改完数据），返回的 promise 等到那一轮才兑现。
+   */
   reload(): Promise<void>;
+  /** 定时刷新用：视图可见才真的 reload；不可见时只记下过期，等重新可见再补拉一次。 */
+  reloadWhenVisible(): void;
+  /** 视图当前是否显示在屏幕上（还没解析过、已销毁都算不可见）。 */
+  isVisible(): boolean;
+  onDidChangeVisibility(listener: (visible: boolean) => void): { dispose(): void };
   setFilter(value: string): void;
   clearFilters(): void;
   focusSearch(): void;
@@ -93,7 +131,6 @@ interface RenderPayload {
   filter: string;
   cwdFilter: string[];
   expanded: Record<string, boolean>;
-  activeCount: number;
   loading: boolean;
   error: string | null;
   hasMore: boolean;
@@ -119,6 +156,7 @@ export function createSessionWebviewProvider(
 ): SessionWebviewProvider {
   const now = deps.now ?? (() => Date.now());
   const listeners = new Set<() => void>();
+  const visibilityListeners = new Set<(visible: boolean) => void>();
   const expanded = new Map<string, boolean>();
   const messageCache = new Map<string, { updatedAt: number | null; preview: SessionPreview }>();
   let view: vscode.WebviewView | undefined;
@@ -129,9 +167,31 @@ export function createSessionWebviewProvider(
   let error: string | null = null;
   let loadedOnce = false;
   let disposed = false;
+  /**
+   * 循环还会再检查 `reloadAgain` 的这段时间为 true，循环一退出就同步清掉：要是等 promise
+   * 兑现后再清，中间那个微任务里来的请求会挂到已经拉完的那一轮上、再也没人补拉。
+   */
+  let reloading = false;
+  let reloadRound: Promise<void> = Promise.resolve();
+  let reloadAgain = false;
+  /** 隐藏期间被跳过的重绘 / 定时刷新：重新可见时补上。 */
+  let renderPending = false;
+  let reloadPending = false;
+  let lastVisible = false;
 
   function notify(): void {
     for (const listener of [...listeners]) listener();
+  }
+
+  function isVisible(): boolean {
+    return view !== undefined && view.visible;
+  }
+
+  function notifyVisibility(): void {
+    const visible = isVisible();
+    if (visible === lastVisible) return;
+    lastVisible = visible;
+    for (const listener of [...visibilityListeners]) listener(visible);
   }
 
   function isExpanded(groupId: string): boolean {
@@ -159,7 +219,7 @@ export function createSessionWebviewProvider(
     if (!snapshot.hasMore && !snapshot.archivedHasMore) return;
     loadingAll = Promise.resolve(deps.loadAll())
       .catch((error) => {
-        console.log(`[codex-helper] 加载全部会话失败：${String(error)}`);
+        deps.logger?.error(`加载全部会话失败：${errorMessage(error)}`);
       })
       .finally(() => {
         loadingAll = null;
@@ -198,7 +258,6 @@ export function createSessionWebviewProvider(
       filter,
       cwdFilter,
       expanded: Object.fromEntries(groups.map((group) => [group.id, isExpanded(group.id)])),
-      activeCount: activeSessionCount(groups),
       loading,
       error,
       hasMore: snapshot.hasMore,
@@ -207,13 +266,23 @@ export function createSessionWebviewProvider(
     };
   }
 
-  function post(message: unknown): void {
+  function post(message: HostMessage): void {
     if (!view) return;
     void view.webview.postMessage(message);
   }
 
+  /**
+   * `retainContextWhenHidden` 让隐藏的 webview 一直活着，标签切换之类的事件照样会触发
+   * 整页重绘：没人看的时候只记一笔，重新可见时（`catchUp`）补一次。
+   */
   function render(): void {
-    if (view) post(payload());
+    if (!view) return;
+    if (!view.visible) {
+      renderPending = true;
+      return;
+    }
+    renderPending = false;
+    post(payload());
   }
 
   function refresh(): void {
@@ -222,25 +291,59 @@ export function createSessionWebviewProvider(
     notify();
   }
 
-  async function reload(): Promise<void> {
-    if (disposed) return;
+  function reload(): Promise<void> {
+    if (disposed) return Promise.resolve();
+    reloadPending = false;
+    if (reloading) {
+      reloadAgain = true;
+      return reloadRound;
+    }
+    reloadRound = runReload();
+    return reloadRound;
+  }
+
+  async function runReload(): Promise<void> {
     loading = true;
     render();
+    reloading = true;
     try {
-      await deps.fetch();
-      error = null;
-      loadedOnce = true;
-      ensureAllLoaded();
+      // 两轮并发拉取谁后到谁覆盖，可能把旧结果盖在新结果上；改成一轮接一轮
+      do {
+        reloadAgain = false;
+        try {
+          await deps.fetch();
+          error = null;
+          loadedOnce = true;
+        } catch (caught) {
+          error = errorMessage(caught);
+        }
+      } while (reloadAgain && !disposed);
+      // 分页只按最后一轮补齐：前几轮的游标已经被它覆盖
+      if (error === null) ensureAllLoaded();
     } catch (caught) {
       error = errorMessage(caught);
     } finally {
+      reloading = false;
       loading = false;
       refresh();
     }
   }
 
+  function reloadWhenVisible(): void {
+    if (disposed) return;
+    if (isVisible()) void reload();
+    else reloadPending = true;
+  }
+
+  /** 重新可见：隐藏期间错过的定时刷新 / 重绘补上；都没错过也要把相对时间刷到现在。 */
+  function catchUp(): void {
+    if (reloadPending) void reload();
+    else if (renderPending) render();
+    else postTimes();
+  }
+
   function postTimes(): void {
-    if (!view) return;
+    if (!view || !view.visible) return;
     const snapshot = deps.snapshot();
     const groups = buildSessionGroups({
       threads: snapshot.threads,
@@ -403,12 +506,14 @@ export function createSessionWebviewProvider(
   return {
     resolveWebviewView(nextView: vscode.WebviewView): void {
       view = nextView;
-      console.log('[codex-helper] resolving session webview view');
-      nextView.webview.options = { enableScripts: true };
+      deps.logger?.info('resolving session webview view');
+      nextView.webview.options = { enableScripts: true, localResourceRoots: [deps.assets.root] };
       const nonce = randomUUID().replace(/-/g, '');
       nextView.webview.html = sessionWebviewHtml({
         nonce,
         cspSource: nextView.webview.cspSource,
+        scriptUri: nextView.webview.asWebviewUri(deps.assets.script).toString(),
+        styleUri: nextView.webview.asWebviewUri(deps.assets.style).toString(),
       });
       const messageSubscription = nextView.webview.onDidReceiveMessage((message) => {
         void handleMessage(message).catch((caught) => {
@@ -417,16 +522,35 @@ export function createSessionWebviewProvider(
           refresh();
         });
       });
+      const visibilitySubscription = nextView.onDidChangeVisibility(() => {
+        if (view !== nextView || disposed) return;
+        if (nextView.visible) catchUp();
+        notifyVisibility();
+      });
       const disposeSubscription = nextView.onDidDispose(() => {
         messageSubscription.dispose();
+        visibilitySubscription.dispose();
         disposeSubscription.dispose();
         if (view === nextView) view = undefined;
+        notifyVisibility();
       });
+      notifyVisibility();
       void reload();
     },
 
     refresh,
     reload,
+    reloadWhenVisible,
+    isVisible,
+
+    onDidChangeVisibility(listener: (visible: boolean) => void) {
+      visibilityListeners.add(listener);
+      return {
+        dispose: () => {
+          visibilityListeners.delete(listener);
+        },
+      };
+    },
 
     setFilter(value: string): void {
       filter = value;
@@ -455,6 +579,7 @@ export function createSessionWebviewProvider(
     dispose(): void {
       disposed = true;
       listeners.clear();
+      visibilityListeners.clear();
       view = undefined;
     },
   };

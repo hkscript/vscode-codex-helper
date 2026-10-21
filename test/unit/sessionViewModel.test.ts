@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionGroup } from '../../src/codex/types';
 import {
-  activeSessionCount,
   collectCwdOptions,
   cwdBasename,
   formatRelativeTime,
@@ -51,48 +49,5 @@ describe('sessionViewModel', () => {
       { path: '/work/alpha', label: 'alpha', count: 2 },
       { path: '/work/beta', label: 'beta', count: 2 },
     ]);
-  });
-
-  it('counts_only_running_sessions_in_visible_groups', () => {
-    const groups: SessionGroup[] = [
-      {
-        id: 'pinned',
-        label: '置顶',
-        sessions: [
-          {
-            id: 'a',
-            label: 'a',
-            preview: '',
-            cwd: null,
-            updatedAt: 1,
-            pinned: true,
-            open: false,
-            running: true,
-            archived: false,
-            tabUri: null,
-          },
-        ],
-      },
-      {
-        id: 'recent',
-        label: '最近',
-        sessions: [
-          {
-            id: 'b',
-            label: 'b',
-            preview: '',
-            cwd: null,
-            updatedAt: 1,
-            pinned: false,
-            open: false,
-            running: false,
-            archived: false,
-            tabUri: null,
-          },
-        ],
-      },
-    ];
-
-    expect(activeSessionCount(groups)).toBe(1);
   });
 });

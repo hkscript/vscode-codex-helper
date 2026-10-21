@@ -81,9 +81,9 @@ Codex 官方扩展（`openai.chatgpt`）把会话藏在面板内部，切换要�
 
 ```bash
 pnpm install
-pnpm build       # esbuild 打包到 dist/extension.js
+pnpm build       # esbuild 打包到 dist/extension.js 与 dist/webview/（侧边栏脚本和样式）
 pnpm test        # vitest 单元测试
-pnpm typecheck   # tsc --noEmit
+pnpm typecheck   # tsc --noEmit：扩展宿主 + src/ui/webview（独立的 DOM tsconfig）
 ```
 
 按 `F5` 启动扩展开发宿主。
@@ -94,11 +94,11 @@ pnpm typecheck   # tsc --noEmit
 
 ```bash
 pnpm version patch        # 或 minor / major：改 package.json 并打 tag
-pnpm build
-# pnpm 10+ 默认拦下依赖的 postinstall，@vscode/vsce-sign 需要显式放行
-pnpm dlx --allow-build=@vscode/vsce-sign @vscode/vsce package  # 产物 vscode-codex-helper-<version>.vsix
-code --install-extension vscode-codex-helper-<version>.vsix
+pnpm package              # vsce 先经 vscode:prepublish 跑 pnpm build，再打包到 releases/
+code --install-extension releases/vscode-codex-helper-<version>.vsix
 ```
+
+`pnpm package` 实际执行的是 `pnpm dlx --allow-build=@vscode/vsce-sign @vscode/vsce package --out releases/`（pnpm 10+ 默认拦下依赖的 postinstall，@vscode/vsce-sign 需要显式放行）。`releases/` 不进 git，也不会被打进 vsix。
 
 ## 许可
 

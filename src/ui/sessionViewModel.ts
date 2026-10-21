@@ -1,5 +1,3 @@
-import type { SessionGroup } from '../codex/types';
-
 /** One directory option shown in the session sidebar's directory filter. */
 export interface CwdOption {
   path: string;
@@ -57,13 +55,4 @@ export function collectCwdOptions(
   return [...counts.entries()]
     .map(([path, count]) => ({ path, label: cwdBasename(path) ?? path, count }))
     .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
-}
-
-/** Number of sessions currently executing a turn in the visible groups. */
-export function activeSessionCount(groups: ReadonlyArray<SessionGroup>): number {
-  let count = 0;
-  for (const group of groups) {
-    for (const session of group.sessions) if (session.running) count += 1;
-  }
-  return count;
 }

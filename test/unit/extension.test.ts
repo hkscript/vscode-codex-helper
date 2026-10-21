@@ -10,6 +10,7 @@ import {
   makeThread,
   pushMessage,
   type FakeChildProcess,
+  type FakeLogChannel,
 } from '../helpers/fakes';
 
 // app-server 子进程必须被替换：真实 spawn 会拉起 Codex 自带的二进制。这个假进程
@@ -34,7 +35,7 @@ vi.mock('node:child_process', async () => {
 const heldRollouts = vi.hoisted(() => ({ current: new Map<string, number>() }));
 vi.mock('../../src/session/processScan', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/session/processScan')>();
-  return { ...actual, scanHeldRollouts: () => heldRollouts.current };
+  return { ...actual, scanHeldRollouts: async () => heldRollouts.current };
 });
 
 const uriApi = createFakeUriApi();
@@ -48,13 +49,14 @@ let registeredProvider:
     }
   | undefined;
 
-/** `activate()` 需要的最小 ExtensionContext（只用到 globalState / subscriptions / 版本号）。 */
+/** `activate()` 需要的最小 ExtensionContext（state / subscriptions / 版本号 / 安装目录）。 */
 function makeContext() {
   return {
     globalState: createFakeMemento(),
     workspaceState: createFakeMemento(),
     subscriptions: [] as unknown[],
     extension: { packageJSON: { version: '0.0.0-test' } },
+    extensionUri: uriApi.file('/ext'),
   };
 }
 
@@ -87,10 +89,13 @@ function makeWebviewView() {
   const posted: unknown[] = [];
   return {
     posted,
+    visible: true,
+    onDidChangeVisibility: () => ({ dispose: () => undefined }),
     webview: {
       options: {} as Record<string, unknown>,
       cspSource: 'vscode-webview://test',
       html: '',
+      asWebviewUri: (uri: UriLike) => ({ toString: () => `https://webview.test${uri.path}` }),
       postMessage: async (message: unknown) => {
         posted.push(message);
         return true;
@@ -357,6 +362,37 @@ describe('extension', () => {
     expect(calls.find((call) => call[0] === 'moveActiveEditor')).toBeUndefined();
   });
 
+  it('logs_to_a_codex_helper_output_channel_owned_by_the_extension', async () => {
+    interceptWebviewView();
+    const context = makeContext();
+    activate(context as never);
+    const tab = makeTab('t11', 'Codex');
+    (vscode.window.tabGroups.all as unknown[]) = [{ viewColumn: 1, tabs: [tab] }];
+    (
+      vscode.window.tabGroups.close as unknown as { mockRejectedValueOnce(error: unknown): void }
+    ).mockRejectedValueOnce(new Error('tab busy'));
+
+    await activatedHandler('codexHelper.openSession')({
+      sessionId: 't11',
+      label: '会话 t11',
+      tabUri: uriApi
+        .file('/local/t11')
+        .with({ scheme: 'openai-codex', authority: 'route', query: '' }),
+      archived: false,
+    });
+
+    expect(vscode.window.createOutputChannel).toHaveBeenCalledWith('Codex Helper', { log: true });
+    const channel = (
+      vscode.window.createOutputChannel as unknown as {
+        mock: { results: Array<{ value: FakeLogChannel }> };
+      }
+    ).mock.results[0]!.value;
+    // 随扩展一起释放
+    expect(context.subscriptions).toContain(channel);
+    expect(channel.info).toHaveBeenCalledWith('registered session webview provider');
+    expect(channel.warn).toHaveBeenCalledWith('重载会话标签前关闭失败：tab busy');
+  });
+
   // Webview 回传的 session 里没有 tabUri（结构化克隆会把 vscode.Uri 变成普通对象），
   // 扩展必须按会话 id 现查真正的标签 resource，否则 openWith 聚焦不到已打开的标签。
   it('webview_open_resolves_the_live_tab_uri_instead_of_trusting_the_payload', async () => {
@@ -386,6 +422,19 @@ describe('extension', () => {
     expect(open![1]).toBe(tab.input.uri);
   });
 
+  it('webview_loads_its_bundled_assets_from_the_extension_install_dir', () => {
+    interceptWebviewView();
+    activate(makeContext() as never);
+
+    const view = makeWebviewView();
+    registeredProvider!.resolveWebviewView(view as never);
+
+    const roots = view.webview.options.localResourceRoots as UriLike[];
+    expect(roots.map((root) => root.path)).toEqual(['/ext/dist/webview']);
+    expect(view.webview.html).toContain('src="https://webview.test/ext/dist/webview/sidebar.js"');
+    expect(view.webview.html).toContain('href="https://webview.test/ext/dist/webview/sidebar.css"');
+  });
+
   // REQ: 会话归档与删除 / Scenario: 预检命中「Codex 那侧持有」时连请求都不发（接线层）
   it('archive_precheck_blocks_the_request_when_codex_holds_the_thread', async () => {
     interceptWebviewView();
@@ -404,6 +453,28 @@ describe('extension', () => {
     );
     expect(message).toContain('无法归档这个会话');
     expect(refreshes).toBe(0);
+  });
+
+  // 预检与运行状态共用扫描器，但不吃它的短时缓存：两次点击间隔远小于缓存窗口，
+  // 第二次仍得看到这之间才出现的持有者
+  it('archive_precheck_rescans_instead_of_reusing_a_recent_scan', async () => {
+    interceptWebviewView();
+    activate(makeContext() as never);
+
+    await runHandler(activatedHandler('codexHelper.archiveSession'), { sessionId: 't1' });
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+
+    heldRollouts.current = new Map([['t2', 30157]]);
+    await activatedHandler('codexHelper.archiveSession')({ sessionId: 't2' });
+
+    const child = await appServerChild();
+    const methods = child.written.map((line) => (JSON.parse(line) as { method: string }).method);
+    expect(methods).not.toContain('thread/archive');
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledTimes(1);
+    const message = String(
+      (vscode.window.showErrorMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0],
+    );
+    expect(message).toContain('无法归档这个会话');
   });
 
   // REQ: 会话归档与删除 / Scenario: 删除只关闭被删会话自己的标签
@@ -649,6 +720,60 @@ describe('extension', () => {
     const open = calls.find((call) => call[0] === 'vscode.openWith');
     expect(open).toBeDefined();
     expect(open![1].path).toBe('/local/tid-nogit');
+  });
+
+  // 定时刷新：侧边栏不在屏幕上时不打 app-server；改设置即时生效，不用重载窗口
+  it('auto_refresh_skips_a_hidden_sidebar_and_follows_setting_changes', async () => {
+    const intervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+    try {
+      let seconds = 30;
+      (
+        vscode.workspace.getConfiguration as unknown as { mockImplementation(fn: unknown): void }
+      ).mockImplementation((section: string) => ({
+        get: (key: string) => {
+          if (section !== 'codexHelper') return undefined;
+          if (key === 'codexExecutable') return '/tmp/fake-codex';
+          return key === 'autoRefreshSeconds' ? seconds : undefined;
+        },
+      }));
+      interceptWebviewView();
+      activate(makeContext() as never);
+
+      const armed = intervalSpy.mock.calls.findIndex((call) => call[1] === 30_000);
+      expect(armed).toBeGreaterThanOrEqual(0);
+      const tick = intervalSpy.mock.calls[armed]![0] as () => void;
+      const handle = intervalSpy.mock.results[armed]!.value;
+
+      // 侧边栏从没打开过：这一拍只记下过期，不起 app-server、不发 thread/list
+      const spawnedBefore = (await appServerChildren()).length;
+      tick();
+      await flush();
+      expect((await appServerChildren()).length).toBe(spawnedBefore);
+
+      const onConfig = (
+        vscode.workspace.onDidChangeConfiguration as unknown as {
+          mock: {
+            calls: Array<[(event: { affectsConfiguration(section: string): boolean }) => void]>;
+          };
+        }
+      ).mock.calls[0]![0];
+      const changed = {
+        affectsConfiguration: (section: string) => section === 'codexHelper.autoRefreshSeconds',
+      };
+
+      seconds = 0;
+      onConfig(changed);
+      expect(clearSpy).toHaveBeenCalledWith(handle);
+
+      intervalSpy.mockClear();
+      seconds = 15;
+      onConfig(changed);
+      expect(intervalSpy.mock.calls.map((call) => call[1])).toEqual([15_000]);
+    } finally {
+      intervalSpy.mockRestore();
+      clearSpy.mockRestore();
+    }
   });
 
   // REQ: 新建会话 / Scenario: 会话进列表后自动出现在侧边栏（接线层）

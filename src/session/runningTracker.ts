@@ -1,4 +1,5 @@
 import type { Thread, Turn } from '../codex/types';
+import { mapWithLimit } from './mapWithLimit';
 import { DEFAULT_STALE_SECONDS, computeRunningIds, selectCandidates } from './runningState';
 
 /**
@@ -18,8 +19,11 @@ export interface WatcherHandle {
 }
 
 export interface RunningTrackerDeps {
-  /** `null` means this platform cannot detect ownership (non-Linux) — see D16. */
-  scanHeldRollouts(): Map<string, number> | null;
+  /**
+   * `null` means this platform cannot detect ownership (non-Linux) — see D16.
+   * `fresh` 为真时不得复用缓存的扫描结果（见 `heldRolloutScanner.ts`）。
+   */
+  scanHeldRollouts(options: { fresh: boolean }): Promise<Map<string, number> | null>;
   listTurns(threadId: string): Promise<Turn | undefined>;
   /** May throw (EMFILE, network filesystems); the tracker then polls instead. */
   watch(path: string, onChange: () => void): WatcherHandle;
@@ -35,6 +39,11 @@ export interface RunningTracker {
   /** Feed the latest thread list; schedules a debounced recompute. */
   update(threads: Thread[]): void;
   snapshot(): Set<string>;
+  /**
+   * 结果只给侧边栏看：`false` 期间的 rollout 写入、轮询和 `update` 只记一笔不重算
+   * （监听照挂），重新 `true` 时若有漏掉的就补算一次。默认 `true`。
+   */
+  setActive(active: boolean): void;
   dispose(): void;
 }
 
@@ -49,21 +58,6 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
-async function mapWithLimit<T>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) {
-      const item = items[cursor++]!;
-      await fn(item);
-    }
-  });
-  await Promise.all(workers);
-}
-
 export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
   const debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const pollMs = (deps.pollSeconds ?? DEFAULT_POLL_SECONDS) * 1000;
@@ -74,6 +68,9 @@ export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
   let threads: Thread[] = [];
   let running = new Set<string>();
   let generation = 0;
+  let needsFreshScan = false;
+  let active = true;
+  let missedWhileInactive = false;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let disposed = false;
@@ -110,6 +107,10 @@ export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
 
   function schedule(): void {
     if (disposed) return;
+    if (!active) {
+      missedWhileInactive = true;
+      return;
+    }
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       debounceTimer = undefined;
@@ -121,7 +122,23 @@ export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
     if (disposed) return;
     const pass = ++generation;
 
-    const heldRollouts = deps.scanHeldRollouts();
+    // 新的线程列表可能带来刚起跑的会话：它的 rollout 不在稍早那份扫描里，复用缓存就会
+    // 判它不是候选、不挂监听，之后未必还有事件再触发重算。候选的 rollout 写入和轮询
+    // 则会接连到来，复用 ttl 内的扫描结果、晚一点看到变化无妨。
+    const fresh = needsFreshScan;
+    needsFreshScan = false;
+
+    let heldRollouts: Map<string, number> | null;
+    try {
+      heldRollouts = await deps.scanHeldRollouts({ fresh });
+    } catch {
+      // 扫描本身失败：保留上一轮的结论，等下一次事件再算
+      if (fresh) needsFreshScan = true;
+      return;
+    }
+    // 扫描期间被 dispose（不能再挂监听、发回调），或已有更新的一轮在跑（D25）
+    if (disposed || pass !== generation) return;
+
     const nowSeconds = Math.floor(now() / 1000);
     const candidates = selectCandidates({ threads, heldRollouts, nowSeconds, staleSeconds });
     armWatchers(candidates);
@@ -156,11 +173,29 @@ export function createRunningTracker(deps: RunningTrackerDeps): RunningTracker {
     update(nextThreads: Thread[]): void {
       if (disposed) return;
       threads = nextThreads;
+      needsFreshScan = true;
       schedule();
     },
 
     snapshot(): Set<string> {
       return new Set(running);
+    },
+
+    setActive(next: boolean): void {
+      if (disposed || next === active) return;
+      active = next;
+      if (!active) {
+        // 已经排上、还没开跑的那一拍也挪到重新可见时再算
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = undefined;
+          missedWhileInactive = true;
+        }
+        return;
+      }
+      if (!missedWhileInactive) return;
+      missedWhileInactive = false;
+      schedule();
     },
 
     dispose(): void {

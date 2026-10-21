@@ -245,9 +245,29 @@ export class ThemeIcon {
   constructor(readonly id: string) {}
 }
 
+/** `LogOutputChannel` 假体：只接住扩展用到的三个级别与释放。 */
+export interface FakeLogChannel {
+  name: string;
+  info: ReturnType<typeof vi.fn>;
+  warn: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+}
+
+export function createFakeLogChannel(name = 'fake'): FakeLogChannel {
+  return { name, info: vi.fn(), warn: vi.fn(), error: vi.fn(), dispose: vi.fn() };
+}
+
 export const Uri = {
   file: (path: string): UriLikeWith => createFakeUriApi().file(path),
   parse: (value: string): UriLikeWith => createFakeUriApi().parse(value),
+  joinPath: (base: UriLike, ...segments: string[]): UriLikeWith =>
+    makeUri({
+      scheme: base.scheme,
+      authority: base.authority,
+      path: [base.path.replace(/\/+$/, ''), ...segments].join('/'),
+      query: base.query,
+    }),
 };
 
 export const window = {
@@ -259,6 +279,8 @@ export const window = {
   createTreeView: vi.fn(() => ({ dispose: vi.fn() })),
   registerTreeDataProvider: vi.fn(() => ({ dispose: vi.fn() })),
   registerWebviewViewProvider: vi.fn(() => ({ dispose: vi.fn() })),
+  // 每次 activate 拿到一个新通道；用例需要断言日志时从 mock.results 里取
+  createOutputChannel: vi.fn((name: string) => createFakeLogChannel(name)),
   // 进度通知：测试里直接执行任务本身（通知的去留不影响断言）
   withProgress: vi.fn(async (_options: unknown, task: (progress: unknown) => unknown) =>
     task({ report: () => undefined }),
@@ -282,6 +304,7 @@ export const extensions = {
 
 export const workspace = {
   getConfiguration: vi.fn(() => ({ get: () => undefined })),
+  onDidChangeConfiguration: vi.fn(() => ({ dispose: vi.fn() })),
   workspaceFolders: undefined as unknown,
 };
 

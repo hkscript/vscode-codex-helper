@@ -23,6 +23,8 @@ interface FakeWatcher {
 
 function harness(options: {
   held?: () => Map<string, number> | null;
+  /** 直接控制扫描（异步、可挂起、可失败）；给了它就不看 `held`。 */
+  scan?: (options: { fresh: boolean }) => Promise<Map<string, number> | null>;
   turns?: (threadId: string) => Promise<Turn | undefined>;
   watchThrows?: boolean;
   pollSeconds?: number;
@@ -32,7 +34,8 @@ function harness(options: {
   const watchCalls: string[] = [];
 
   const tracker = createRunningTracker({
-    scanHeldRollouts: options.held ?? (() => new Map([['t1', 4242]])),
+    scanHeldRollouts:
+      options.scan ?? (async () => (options.held ? options.held() : new Map([['t1', 4242]]))),
     listTurns: options.turns ?? (async () => runningTurn()),
     watch(path: string, onChange: () => void): WatcherHandle {
       watchCalls.push(path);
@@ -262,6 +265,168 @@ describe('runningTracker', () => {
     expect(tracker.snapshot().has('t2')).toBe(true);
     expect(notifications).toHaveLength(1);
     expect([...notifications[0]!]).toEqual(['t2']);
+
+    tracker.dispose();
+  });
+  it('update_requests_a_fresh_scan_while_rollout_writes_may_reuse_one', async () => {
+    // 新列表可能带来刚起跑的会话，拿缓存里稍早的扫描会漏掉它；候选自己的写入只关心已知候选
+    const scans: boolean[] = [];
+    const { tracker, watchers } = harness({
+      scan: async ({ fresh }) => {
+        scans.push(fresh);
+        return new Map([['t1', 4242]]);
+      },
+    });
+
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(scans).toEqual([true]);
+
+    watchers.get(pathOf('t1'))!.fire();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(scans).toEqual([true, false]);
+
+    // 一次去抖窗口里只要有过 update，这一轮就得现扫
+    watchers.get(pathOf('t1'))!.fire();
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(scans).toEqual([true, false, true]);
+
+    tracker.dispose();
+  });
+
+  it('scan_resolving_after_dispose_neither_watches_nor_notifies', async () => {
+    let resolveScan: ((held: Map<string, number>) => void) | undefined;
+    const { tracker, notifications, watchCalls } = harness({
+      scan: () =>
+        new Promise((resolve) => {
+          resolveScan = resolve;
+        }),
+    });
+
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(resolveScan).toBeDefined();
+
+    tracker.dispose();
+    resolveScan!(new Map([['t1', 4242]]));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE * 10);
+
+    // 迟到的扫描结果不能在 dispose 之后再挂 inotify 句柄、发回调
+    expect(watchCalls).toHaveLength(0);
+    expect(notifications).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('stale_scan_results_are_discarded', async () => {
+    const pending: Array<(held: Map<string, number>) => void> = [];
+    const { tracker, notifications, watchers } = harness({
+      scan: () => new Promise((resolve) => pending.push(resolve)),
+    });
+
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(pending).toHaveLength(2);
+
+    // 第二轮先回来：t1 被持有、正在跑
+    pending[1]!(new Map([['t1', 4242]]));
+    await vi.advanceTimersByTimeAsync(0);
+    expect([...notifications.at(-1)!]).toEqual(['t1']);
+
+    // 迟到的第一轮说「没人持有」——它比当前状态旧，必须被丢弃（D25）
+    pending[0]!(new Map());
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(notifications).toHaveLength(1);
+    expect(tracker.snapshot().has('t1')).toBe(true);
+    // 连监听也不能按它的旧结论收掉，否则 t1 后续的写入就再也收不到了
+    expect(watchers.get(pathOf('t1'))!.closed).toBe(false);
+
+    tracker.dispose();
+  });
+
+  it('failed_scan_keeps_the_last_known_state', async () => {
+    // 扫描失败说明不了任何会话的状态：既不能清空运行集合，也不能变成 unhandled rejection
+    let fail = false;
+    const scans: boolean[] = [];
+    const { tracker, watchers, notifications } = harness({
+      scan: async ({ fresh }) => {
+        scans.push(fresh);
+        if (fail) throw new Error('EMFILE: /proc');
+        return new Map([['t1', 4242]]);
+      },
+    });
+
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(tracker.snapshot().has('t1')).toBe(true);
+    expect(notifications).toHaveLength(1);
+
+    fail = true;
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+    expect(tracker.snapshot().has('t1')).toBe(true);
+    expect(notifications).toHaveLength(1);
+
+    // 失败的那轮本该现扫：下一轮补上，而不是退回缓存
+    fail = false;
+    watchers.get(pathOf('t1'))!.fire();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(scans).toEqual([true, true, true]);
+
+    tracker.dispose();
+  });
+
+  it('inactive_tracker_defers_recompute_until_reactivated', async () => {
+    // 侧边栏切走后，回合里一行行的 rollout 写入不该再换来 /proc 扫描和 turns 查询
+    let turn: Turn = doneTurn();
+    const listTurns = vi.fn(async () => turn);
+    const { tracker, watchers, notifications } = harness({ turns: listTurns });
+
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(listTurns).toHaveBeenCalledTimes(1);
+
+    const watcher = watchers.get(pathOf('t1'))!;
+    turn = runningTurn();
+    watcher.fire();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE - 1);
+    // 已经排上的那一拍也要撤掉
+    tracker.setActive(false);
+    watcher.fire();
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE * 10);
+    expect(listTurns).toHaveBeenCalledTimes(1);
+    expect(notifications).toHaveLength(0);
+    // 监听照挂：重新可见之前的写入不能因为关了句柄而丢掉
+    expect(watcher.closed).toBe(false);
+
+    // 重新可见：攒下的几次变化合成一次重算
+    tracker.setActive(true);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(listTurns).toHaveBeenCalledTimes(2);
+    expect(notifications).toHaveLength(1);
+    expect([...notifications[0]!]).toEqual(['t1']);
+
+    tracker.dispose();
+  });
+
+  it('reactivating_without_missed_events_does_not_recompute', async () => {
+    const listTurns = vi.fn(async () => runningTurn());
+    const { tracker } = harness({ turns: listTurns });
+
+    tracker.update([thread('t1')]);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    expect(listTurns).toHaveBeenCalledTimes(1);
+
+    tracker.setActive(false);
+    tracker.setActive(true);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE * 10);
+
+    expect(listTurns).toHaveBeenCalledTimes(1);
 
     tracker.dispose();
   });

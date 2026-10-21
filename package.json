@@ -170,7 +170,9 @@
   "scripts": {
     "build": "node esbuild.mjs",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/ui/webview",
+    "vscode:prepublish": "pnpm run build",
+    "package": "node -e \"require('fs').mkdirSync('releases',{recursive:true})\" && pnpm dlx --allow-build=@vscode/vsce-sign @vscode/vsce package --out releases/"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
