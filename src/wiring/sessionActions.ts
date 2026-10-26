@@ -28,6 +28,8 @@ export interface SessionActionsDeps {
   tabs: EditorTabs;
   /** 打开标签前的同步钩子（「不重试」补丁）。 */
   beforeOpen(): void;
+  /** 快速模式：在已加载的 Codex 侧边栏里打开历史会话。 */
+  openInSidebar?(sessionId: string): Promise<boolean>;
   view: Pick<SessionWebviewProvider, 'reload' | 'refresh'>;
 }
 
@@ -106,7 +108,8 @@ export function createSessionActions(deps: SessionActionsDeps): SessionActions {
       return unarchived;
     },
     revealTab: (uri) => opener.revealTab(uri),
-    openSession: (id) => opener.openSession(id),
+    openSession: async (id) =>
+      (await deps.openInSidebar?.(id)) ? true : opener.openSession(id),
     // 点这一行顺带把「标题还停在 Codex」的标签重载一次（见 reloadUntitledTab）
     reloadUntitledTab: tabs.reloadUntitledTab,
   });

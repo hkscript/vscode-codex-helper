@@ -2,7 +2,7 @@
   "name": "vscode-codex-helper",
   "displayName": "Codex Helper",
   "description": "Manage Codex sessions as editor tabs — split, drag and compare them side by side, with a sidebar tree for quick switching.",
-  "version": "0.0.48",
+  "version": "0.0.49",
   "publisher": "hkscript",
   "license": "MIT",
   "icon": "resources/icon.png",
@@ -123,6 +123,19 @@
           "type": "boolean",
           "default": false,
           "description": "开启后只列出当前工作区目录下的会话。"
+        },
+        "codexHelper.sessionOpenMode": {
+          "type": "string",
+          "enum": [
+            "sidebar",
+            "editorTab"
+          ],
+          "enumDescriptions": [
+            "复用 Codex 已加载的侧边栏，新建和打开历史会话都在同一个 Webview 中切换，速度快。",
+            "每次新建会话打开独立编辑器标签；首次打开每个标签可能等待 Codex Webview 冷启动。"
+          ],
+          "default": "sidebar",
+          "description": "新建会话和打开历史会话的方式。"
         },
         "codexHelper.autoRefreshSeconds": {
           "type": "number",

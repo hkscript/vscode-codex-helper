@@ -37,6 +37,7 @@ function makeNewSessionDeps() {
   // 这条默认值也让下面三条老用例原样成立。
   const createBoundSession = vi.fn(async () => null as string | null);
   const beforeCreate = vi.fn();
+  const tryOpenInSidebar = vi.fn(async () => false);
   return {
     deps: {
       executeCommand,
@@ -45,6 +46,7 @@ function makeNewSessionDeps() {
       createNonce,
       createBoundSession,
       beforeCreate,
+      tryOpenInSidebar,
     },
     calls,
     executeCommand,
@@ -52,6 +54,7 @@ function makeNewSessionDeps() {
     createNonce,
     createBoundSession,
     beforeCreate,
+    tryOpenInSidebar,
   };
 }
 
@@ -231,6 +234,18 @@ describe('commands', () => {
     expect(beforeCreate.mock.invocationCallOrder[0]).toBeLessThan(
       createBoundSession.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it('uses_the_fast_sidebar_path_without_creating_a_bound_session', async () => {
+    const { deps, executeCommand, createBoundSession, tryOpenInSidebar } = makeNewSessionDeps();
+    tryOpenInSidebar.mockResolvedValue(true);
+    const newSession = createNewSessionCommand(deps);
+
+    await newSession();
+
+    expect(tryOpenInSidebar).toHaveBeenCalledTimes(1);
+    expect(createBoundSession).not.toHaveBeenCalled();
+    expect(executeCommand).not.toHaveBeenCalled();
   });
 
   it('does_not_block_session_creation_when_the_before_create_hook_throws', async () => {

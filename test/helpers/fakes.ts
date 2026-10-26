@@ -298,6 +298,10 @@ export const commands = {
   executeCommand: vi.fn(async () => undefined),
 };
 
+export const env = {
+  openExternal: vi.fn(async () => true),
+};
+
 export const extensions = {
   getExtension: vi.fn(() => undefined),
 };
@@ -321,6 +325,7 @@ export default {
   Uri,
   window,
   commands,
+  env,
   extensions,
   workspace,
   TabInputCustom,

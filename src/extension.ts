@@ -5,6 +5,7 @@ import { createSafeLogger, type Logger } from './log';
 import { createPinStore } from './session/pinStore';
 import type { RunningTracker } from './session/runningTracker';
 import { createSessionSource } from './session/sessionSource';
+import { createSidebarMode } from './session/sidebarMode';
 import {
   createSessionWebviewProvider,
   sessionWebviewAssets,
@@ -164,11 +165,20 @@ export function activate(context: vscode.ExtensionContext): void {
     logger,
   });
 
+  const sidebarMode = createSidebarMode({
+    enabled: () => configuration().get<string>('sessionOpenMode') === 'sidebar',
+    executeCommand: (command: string, ...args: unknown[]) =>
+      Promise.resolve(vscode.commands.executeCommand(command, ...args)),
+    openExternal: async (uri) => vscode.env.openExternal(uri as vscode.Uri),
+    uriApi: vscode.Uri,
+  });
+
   const newSessions = wireNewSession({
     launchAppServer,
     configuration,
     logger,
     beforeCreate: patchOnOpen,
+    tryOpenInSidebar: () => sidebarMode.newSession(),
     api,
     workspaceCwd,
     openTabs: tabs.openTabs,
@@ -211,6 +221,7 @@ export function activate(context: vscode.ExtensionContext): void {
     pinStore,
     tabs,
     beforeOpen: patchOnOpen,
+    openInSidebar: (sessionId) => sidebarMode.openSession(sessionId),
     view: provider,
   });
 

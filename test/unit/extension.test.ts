@@ -307,6 +307,40 @@ describe('extension', () => {
     );
   });
 
+  it('opens_history_in_the_loaded_codex_sidebar_when_fast_mode_is_enabled', async () => {
+    (
+      vscode.workspace.getConfiguration as unknown as { mockImplementation(fn: unknown): void }
+    ).mockImplementation((section: string) => ({
+      get: (key: string) => {
+        if (section !== 'codexHelper') return undefined;
+        if (key === 'codexExecutable') return '/tmp/fake-codex';
+        if (key === 'sessionOpenMode') return 'sidebar';
+        return undefined;
+      },
+    }));
+    interceptWebviewView();
+    activate(makeContext() as never);
+
+    await activatedHandler('codexHelper.openSession')({
+      sessionId: 'conv-1',
+      archived: false,
+    });
+
+    const openExternal = vscode.env.openExternal as unknown as {
+      mock: { calls: Array<[UriLike]> };
+    };
+    expect(openExternal.mock.calls).toHaveLength(1);
+    expect(String(openExternal.mock.calls[0]![0].toString())).toBe(
+      'vscode://openai.chatgpt/local/conv-1',
+    );
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      'vscode.openWith',
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   // REQ: 未标题标签的标题同步 / Scenario: 点这一行就把标题还停在 Codex 的标签重载一次
   it('open_session_command_reloads_an_untitled_tab_in_place', async () => {
     interceptWebviewView();

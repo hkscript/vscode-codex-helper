@@ -65,6 +65,8 @@ export interface NewSessionWiringDeps {
   logger: Logger;
   /** 建会话前的同步钩子；用于在 Codex 面板打开前确保「不重试」补丁已落盘。 */
   beforeCreate?(): void;
+  /** 快速模式：在已加载的 Codex 侧边栏中新建，true 时不再创建编辑器标签。 */
+  tryOpenInSidebar?(): Promise<boolean>;
   /** 共享 app-server 上的会话 API（盯新会话进列表用）。 */
   api(): Pick<ThreadApi, 'listThreads'>;
   workspaceCwd(): string | null;
@@ -163,6 +165,7 @@ export function wireNewSession(deps: NewSessionWiringDeps): NewSessionWiring {
     uriApi: vscode.Uri,
     createNonce: () => randomUUID(),
     beforeCreate: deps.beforeCreate,
+    tryOpenInSidebar: deps.tryOpenInSidebar,
     // 首选：直接建出一个能被面板打开的会话（标签从出生就绑定会话）；
     // 建出来之后盯到它进列表为止，否则侧边栏里要手动刷新才看得到这一行
     createBoundSession: async () => {

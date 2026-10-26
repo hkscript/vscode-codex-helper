@@ -124,6 +124,8 @@ export interface NewSessionCommandDeps {
    * 与打开会话的钩子同契约：永不阻塞、异常不得影响建会话。
    */
   beforeCreate?(): void;
+  /** 快速模式：在已加载的 Codex 侧边栏中新建；false 时继续走原标签路径。 */
+  tryOpenInSidebar?(): Promise<boolean>;
   /**
    * 直接建出一个「面板能打开」的会话并返回它的 id；探测不到 gitInfo 或任一步失败时
    * 返回 `null`（此时回退空白面板）。这个依赖是流程里唯一会失败的部分，失败不打扰用户。
@@ -137,6 +139,12 @@ export function createNewSessionCommand(deps: NewSessionCommandDeps): () => Prom
       deps.beforeCreate?.();
     } catch {
       // 补丁检查只是顺带动作，不能影响用户建会话
+    }
+
+    try {
+      if (await deps.tryOpenInSidebar?.()) return;
+    } catch {
+      // 快速入口失败时静默回退，不能让用户失去新建会话能力
     }
 
     // 1) 先试「直接建会话 → 开绑定标签」：标签从出生就绑定会话，标题由 Codex 自己写
