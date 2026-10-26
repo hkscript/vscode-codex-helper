@@ -43,6 +43,10 @@ describe('threadApi', () => {
     const small = createThreadApi(client, { pageSize: 5 });
     await small.listThreads();
     expect((requests[1]!.params as { limit: number }).limit).toBe(5);
+
+    // 单次调用还能再覆盖（只看最近几条时不必拉满一页：thread/list 的耗时随条数增长）
+    await small.listThreads({ limit: 10 });
+    expect((requests[2]!.params as { limit: number }).limit).toBe(10);
   });
 
   it('normalizes_unix_second_timestamps_to_milliseconds', async () => {

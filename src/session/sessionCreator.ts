@@ -46,8 +46,11 @@ export interface CreateBoundSessionOptions {
   /**
    * 落盘触发器要写的 git 信息：能探测到就写真实的，探测不到（不是 git 仓库）传
    * `PLACEHOLDER_GIT_INFO`。传 `null` 会直接放弃建会话（调用方应改用占位值）。
+   *
+   * 也可以传 Promise：握手完成后才等它，让 git 探测与子进程冷启动并行；
+   * 它兑现成 `null` 或失败时同样放弃（此时还没发 `thread/start`）。
    */
-  gitInfo: GitInfo | null;
+  gitInfo: GitInfo | null | PromiseLike<GitInfo | null>;
   /**
    * 建出来就写进这个会话的思考级别（`thread/settings/update`）；`null` / 不传 = 不写。
    *
@@ -56,8 +59,11 @@ export interface CreateBoundSessionOptions {
    * 面板打开时就会显示这个级别（本机 probe 验证过：写进去的值会落到
    * `threads.reasoning_effort` 与 rollout 的 `thread_settings_applied`，另一个进程 resume
    * 也能读回来）。
+   *
+   * 也可以传 Promise：`thread/resume` 之后才等它 —— 学级别要读一次 `thread/list`，是整条
+   * 流程里最慢的一步，这样它与建会话并行而不是排在前面。失败按「不写」处理。
    */
-  reasoningEffort?: string | null;
+  reasoningEffort?: string | null | PromiseLike<string | null>;
 }
 
 export interface ExitableChild {
@@ -97,9 +103,14 @@ export async function createBoundSession(
   options: CreateBoundSessionOptions,
 ): Promise<string | null> {
   if (!options.gitInfo) return null;
+  // 先挂上兜底：这两个 Promise 要等到后面才 await，期间失败不能变成未处理的拒绝
+  const pendingGitInfo = Promise.resolve(options.gitInfo).catch(() => null);
+  const pendingEffort = Promise.resolve(options.reasoningEffort ?? null).catch(() => null);
 
   try {
     await client.start();
+    const gitInfo = await pendingGitInfo;
+    if (!gitInfo) return null;
 
     const started = await client.request<{ thread?: { id?: string } | null }>(
       'thread/start',
@@ -108,7 +119,7 @@ export async function createBoundSession(
     const id = started?.thread?.id;
     if (!id) return null;
 
-    await client.request('thread/metadata/update', { threadId: id, gitInfo: options.gitInfo });
+    await client.request('thread/metadata/update', { threadId: id, gitInfo });
     // 这一步才让 Codex 把 rollout 落盘；少了它，面板打开只会得到
     // 「no rollout found」/「Failed to resume chat」。
     await client.request('thread/resume', { threadId: id });
@@ -116,12 +127,10 @@ export async function createBoundSession(
     // 思考级别必须**在 resume 之后**写：只有加载起来的会话才吃得下这次设置更新
     // （本机 probe：在 resume 之前发同样的请求不落盘，换个进程 resume 读回来还是 null）。
     // 这一步是加分项，失败只让这个会话没有默认档，不该把已经建好的会话丢掉。
-    if (options.reasoningEffort) {
+    const effort = await pendingEffort;
+    if (effort) {
       try {
-        await client.request('thread/settings/update', {
-          threadId: id,
-          effort: options.reasoningEffort,
-        });
+        await client.request('thread/settings/update', { threadId: id, effort });
       } catch {
         // 服务端不支持这个实验接口 / 级别不在模型支持列表里：保持静默，会话照常打开
       }

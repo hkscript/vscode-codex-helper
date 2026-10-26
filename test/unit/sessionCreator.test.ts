@@ -179,6 +179,81 @@ describe('sessionCreator', () => {
     ).resolves.toBe('thread-9');
   });
 
+  // 建会话的关键路径上不排队：git 探测与进程冷启动并行，握手之后才等它
+  it('starts_the_process_while_git_info_is_still_being_detected', async () => {
+    let detect!: (info: typeof gitInfo) => void;
+    const detecting = new Promise<typeof gitInfo>((resolve) => {
+      detect = resolve;
+    });
+    const client = makeClient((method) =>
+      method === 'thread/start' ? { thread: { id: 'thread-10' } } : {},
+    );
+
+    const created = createBoundSession(client, { cwd: '/repo', gitInfo: detecting });
+    await Promise.resolve();
+    expect(client.calls.map((call) => call.method)).toEqual(['initialize']);
+
+    detect(gitInfo);
+    await expect(created).resolves.toBe('thread-10');
+    expect(client.calls[2]!.params).toEqual({ threadId: 'thread-10', gitInfo });
+  });
+
+  it('gives_up_before_thread_start_when_detected_git_info_is_empty', async () => {
+    const client = makeClient(() => ({ thread: { id: 'thread-11' } }));
+
+    await expect(
+      createBoundSession(client, { cwd: '/repo', gitInfo: Promise.resolve(null) }),
+    ).resolves.toBeNull();
+    expect(client.calls.map((call) => call.method)).toEqual(['initialize']);
+  });
+
+  // REQ: 新建会话记忆思考级别 / Scenario: 学级别与建会话并行，resume 之后才等它
+  it('waits_for_a_pending_reasoning_effort_only_after_resume', async () => {
+    let learn!: (effort: string | null) => void;
+    const learning = new Promise<string | null>((resolve) => {
+      learn = resolve;
+    });
+    const client = makeClient((method) =>
+      method === 'thread/start' ? { thread: { id: 'thread-12' } } : {},
+    );
+
+    const created = createBoundSession(client, {
+      cwd: '/repo',
+      gitInfo,
+      reasoningEffort: learning,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    // 级别还没学到，落盘三步已经走完
+    expect(client.calls.map((call) => call.method)).toEqual([
+      'initialize',
+      'thread/start',
+      'thread/metadata/update',
+      'thread/resume',
+    ]);
+
+    learn('xhigh');
+    await expect(created).resolves.toBe('thread-12');
+    expect(client.calls[4]).toEqual({
+      method: 'thread/settings/update',
+      params: { threadId: 'thread-12', effort: 'xhigh' },
+    });
+  });
+
+  it('still_returns_the_id_when_learning_the_effort_fails', async () => {
+    const client = makeClient((method) =>
+      method === 'thread/start' ? { thread: { id: 'thread-13' } } : {},
+    );
+
+    await expect(
+      createBoundSession(client, {
+        cwd: '/repo',
+        gitInfo,
+        reasoningEffort: Promise.reject(new Error('thread/list failed')),
+      }),
+    ).resolves.toBe('thread-13');
+    expect(client.calls.map((call) => call.method)).not.toContain('thread/settings/update');
+  });
+
   // REQ: 新建会话 / Scenario: 落盘后必须等子进程退出才打开标签
   it('waits_for_child_exit_and_gives_up_after_timeout', async () => {
     const exiting = createFakeChildProcess();

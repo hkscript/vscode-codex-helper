@@ -16,6 +16,8 @@ export interface ThreadListQuery {
   cursor?: string | null;
   /** `true` 时只列已归档会话（`thread/list` 的 `archived` 过滤器）。 */
   archived?: boolean;
+  /** 覆盖这一次的每页条数：`thread/list` 的耗时随条数增长，只看前几条时没必要拉满一页。 */
+  limit?: number;
 }
 
 export interface ThreadApi {
@@ -54,7 +56,7 @@ export function createThreadApi(
   return {
     async listThreads(query: ThreadListQuery = {}): Promise<ThreadListResponse> {
       const params: Record<string, unknown> = {
-        limit: pageSize,
+        limit: query.limit ?? pageSize,
         sortKey: 'updated_at',
         sortDirection: 'desc',
         // 「已归档」分组要单独拉一页；不传时仍然只列未归档。

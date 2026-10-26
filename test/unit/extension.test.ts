@@ -144,6 +144,27 @@ async function appServerChildren(): Promise<FakeChildProcess[]> {
   return mocked.__children();
 }
 
+/**
+ * 「新建会话」这一下新起的两个进程：一次性 app-server（带 `--disable plugins`，负责落盘）
+ * 与共享 app-server（学思考级别的 thread/list 走它；每个用例 deactivate 后都会重新起）。
+ */
+async function newSessionProcesses(
+  before: number,
+): Promise<{ oneShot: FakeChildProcess; shared: FakeChildProcess }> {
+  const children = (await appServerChildren()).slice(before);
+  const calls = (
+    (await import('node:child_process')) as unknown as { __calls(): Array<{ args: string[] }> }
+  )
+    .__calls()
+    .slice(before);
+  const oneShots = children.filter((_, index) => calls[index]!.args.includes('--disable'));
+  const shared = children.filter((_, index) => !calls[index]!.args.includes('--disable'));
+  // 落盘只能由恰好一个一次性进程来做：共享的那个会一直持有 writer 锁
+  expect(oneShots).toHaveLength(1);
+  expect(shared).toHaveLength(1);
+  return { oneShot: oneShots[0]!, shared: shared[0]! };
+}
+
 /** 兑现某个假进程当前缓冲区里的每一条请求（按 method 给结果）。 */
 async function answerChildRound(
   child: FakeChildProcess,
@@ -637,10 +658,8 @@ describe('extension', () => {
     const pending = activatedHandler('codexHelper.newSession')();
     await flush();
 
-    const children = await appServerChildren();
-    // 恰好新起一个进程：共享的那个 app-server 不能被用来落盘（它会一直持有 writer 锁）
-    expect(children.length - before).toBe(1);
-    const oneShot = children[before]!;
+    // 共享的那个 app-server 不能被用来落盘（它会一直持有 writer 锁），只用来学思考级别
+    const { oneShot, shared } = await newSessionProcesses(before);
     const spawnCalls = (
       (await import('node:child_process')) as unknown as {
         __calls(): Array<{ args: string[] }>;
@@ -648,10 +667,13 @@ describe('extension', () => {
     ).__calls();
     // 一次性 app-server 只负责落盘会话，不需要远程插件同步；后者在网络异常时会拖慢建会话。
     expect(spawnCalls.at(-1)?.args).toEqual(['app-server', '--disable', 'plugins']);
+    const listRequests = [
+      ...(await answerChildRound(shared)),
+      // 「上次用过的思考级别」（本轮没有任何历史级别）
+      ...(await answerChildRound(shared, { 'thread/list': { data: [], nextCursor: null } })),
+    ];
     const requests = [
       ...(await answerChildRound(oneShot)),
-      // 建会话之前先读一眼「上次用过的思考级别」（本轮没有任何历史级别）
-      ...(await answerChildRound(oneShot, { 'thread/list': { data: [], nextCursor: null } })),
       // 每次回包之后才写下一个请求：一轮一个
       ...(await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-1' } } })),
       ...(await answerChildRound(oneShot, { 'thread/metadata/update': {} })),
@@ -659,16 +681,24 @@ describe('extension', () => {
     ];
     await pending;
 
-    // 建会话的调用序列就是本机 probe 出来的那条（少了 metadata/update 面板打不开）
+    // 建会话的调用序列就是本机 probe 出来的那条（少了 metadata/update 面板打不开）；
+    // 学级别的 thread/list 不再排在一次性进程里
     expect(requests.map((request) => request.method)).toEqual([
       'initialize',
-      'thread/list',
       'thread/start',
       'thread/metadata/update',
       'thread/resume',
     ]);
-    expect(requests[2]!.params).toEqual({ cwd: '/repo' });
-    expect(requests[3]!.params).toEqual({
+    // 只看最近 10 条（LAST_USED_SCAN_LIMIT），不拉满一页；不带任何过滤
+    expect(listRequests.map((request) => request.method)).toEqual(['initialize', 'thread/list']);
+    expect(listRequests[1]!.params).toEqual({
+      limit: 10,
+      sortKey: 'updated_at',
+      sortDirection: 'desc',
+      archived: false,
+    });
+    expect(requests[1]!.params).toEqual({ cwd: '/repo' });
+    expect(requests[2]!.params).toEqual({
       threadId: 'tid-1',
       gitInfo: { branch: 'main', sha: 'abc123', originUrl: 'git@example.com:o/r.git' },
     });
@@ -697,36 +727,46 @@ describe('extension', () => {
     const pending = activatedHandler('codexHelper.newSession')();
     await flush();
 
-    const oneShot = (await appServerChildren())[before]!;
+    const { oneShot, shared } = await newSessionProcesses(before);
+    // 共享进程握手完、thread/list 已发出但还没回：学级别还在路上
+    await answerChildRound(shared);
+    expect(shared.written.map((line) => JSON.parse(line).method)).toEqual(['thread/list']);
+
+    // 建会话不等它：start → metadata → resume 照常推进
     const requests = [
       ...(await answerChildRound(oneShot)),
-      // 最近一行是刚建出来的空会话（没有级别），再往前才是用户真正用过的级别
-      ...(await answerChildRound(oneShot, {
-        'thread/list': {
-          data: [
-            makeThread({ id: 'fresh', reasoningEffort: null, updatedAt: 30 }),
-            makeThread({ id: 'used', reasoningEffort: 'high', updatedAt: 20 }),
-          ],
-          nextCursor: null,
-        },
-      })),
       ...(await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-effort' } } })),
       ...(await answerChildRound(oneShot, { 'thread/metadata/update': {} })),
       ...(await answerChildRound(oneShot, { 'thread/resume': {} })),
-      ...(await answerChildRound(oneShot, { 'thread/settings/update': {} })),
     ];
+    // 只有写级别这一步要等学级别的结果
+    expect(oneShot.written).toEqual([]);
+    expect(oneShot.killed).toBe(false);
+
+    // 最近一行是刚建出来的空会话（没有级别），再往前才是用户真正用过的级别
+    await answerChildRound(shared, {
+      'thread/list': {
+        data: [
+          makeThread({ id: 'fresh', reasoningEffort: null, updatedAt: 30 }),
+          makeThread({ id: 'used', reasoningEffort: 'high', updatedAt: 20 }),
+        ],
+        nextCursor: null,
+      },
+    });
+    requests.push(...(await answerChildRound(oneShot, { 'thread/settings/update': {} })));
     await pending;
 
     expect(requests.map((request) => request.method)).toEqual([
       'initialize',
-      'thread/list',
       'thread/start',
       'thread/metadata/update',
       'thread/resume',
       'thread/settings/update',
     ]);
     // 级别写在这个会话自己身上（和面板自己保存级别走的是同一条路），不是全局配置
-    expect(requests[5]!.params).toEqual({ threadId: 'tid-effort', effort: 'high' });
+    expect(requests[4]!.params).toEqual({ threadId: 'tid-effort', effort: 'high' });
+    // 写完级别才退出、才开标签：锁随进程消失之后面板才 resume
+    expect(oneShot.killed).toBe(true);
   });
 
   // REQ: 新建会话 / Scenario: 非 git 工作区仍然建会话并打开绑定标签
@@ -744,10 +784,11 @@ describe('extension', () => {
     const before = (await appServerChildren()).length;
     const pending = activatedHandler('codexHelper.newSession')();
     await flush();
-    const oneShot = (await appServerChildren())[before]!;
+    const { oneShot, shared } = await newSessionProcesses(before);
+    await answerChildRound(shared);
+    await answerChildRound(shared, { 'thread/list': { data: [], nextCursor: null } });
     const requests = [
       ...(await answerChildRound(oneShot)),
-      ...(await answerChildRound(oneShot, { 'thread/list': { data: [], nextCursor: null } })),
       ...(await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-nogit' } } })),
       ...(await answerChildRound(oneShot, { 'thread/metadata/update': {} })),
       ...(await answerChildRound(oneShot, { 'thread/resume': {} })),
@@ -756,7 +797,7 @@ describe('extension', () => {
 
     // 「这个目录不是 git 仓库」不该让新建会话退化：写全零 sha 占位照样能落盘，
     // 而 Codex 前端只读 branch/originUrl，占位在界面上看不见。
-    expect(requests[3]!.params).toEqual({
+    expect(requests[2]!.params).toEqual({
       threadId: 'tid-nogit',
       gitInfo: { sha: '0'.repeat(40) },
     });
@@ -887,9 +928,10 @@ describe('extension', () => {
       const before = (await appServerChildren()).length;
       const pending = activatedHandler('codexHelper.newSession')();
       await flush();
-      const oneShot = (await appServerChildren())[before]!;
+      const { oneShot, shared } = await newSessionProcesses(before);
+      await answerChildRound(shared);
+      await answerChildRound(shared, { 'thread/list': { data: [], nextCursor: null } });
       await answerChildRound(oneShot);
-      await answerChildRound(oneShot, { 'thread/list': { data: [], nextCursor: null } });
       await answerChildRound(oneShot, { 'thread/start': { thread: { id: 'tid-new' } } });
       await answerChildRound(oneShot, { 'thread/metadata/update': {} });
       await answerChildRound(oneShot, { 'thread/resume': {} });

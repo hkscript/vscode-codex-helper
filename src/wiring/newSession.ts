@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { ChildProcessLike } from '../codex/appServerClient';
-import { DEFAULT_PAGE_SIZE, createThreadApi, type ThreadApi } from '../codex/threadApi';
+import type { ThreadApi } from '../codex/threadApi';
 import type { OpenTab } from '../codex/types';
 import { createNewSessionCommand } from '../commands';
 import type { Logger } from '../log';
 import { createNewSessionWatch, type NewSessionWatch } from '../session/newSessionWatch';
-import { resolveNewSessionReasoningEffort } from '../session/reasoningEffort';
+import {
+  LAST_USED_SCAN_LIMIT,
+  resolveNewSessionReasoningEffort,
+} from '../session/reasoningEffort';
 import {
   PLACEHOLDER_GIT_INFO,
   createBoundSession,
@@ -67,7 +70,7 @@ export interface NewSessionWiringDeps {
   beforeCreate?(): void;
   /** 快速模式：在已加载的 Codex 侧边栏中新建，true 时不再创建编辑器标签。 */
   tryOpenInSidebar?(): Promise<boolean>;
-  /** 共享 app-server 上的会话 API（盯新会话进列表用）。 */
+  /** 共享 app-server 上的会话 API（学思考级别、盯新会话进列表用）。 */
   api(): Pick<ThreadApi, 'listThreads'>;
   workspaceCwd(): string | null;
   openTabs(): OpenTab[];
@@ -94,7 +97,20 @@ export function wireNewSession(deps: NewSessionWiringDeps): NewSessionWiring {
    * 必须由一个马上退出的进程来做，锁随进程消失。
    */
   async function createBoundSessionInOneShot(): Promise<string | null> {
-    const gitInfo = (await gitInfoForWorkspace()) ?? PLACEHOLDER_GIT_INFO;
+    // 三件互不依赖的事在点击时同时起跑，各自只在用到的那一步才等：
+    //  - 学「上次用过的思考级别」要读一次 thread/list，是整条流程里最慢的一步（本机实测
+    //    250~400ms）。放到已经热着的共享 app-server 上、只读要看的那几条，resume 之后写级别时
+    //    才等它；thread/list 只读、不碰 writer 锁。学不到（或设置成 off）就建一个没有级别的
+    //    会话，失败都在 resolveNewSessionReasoningEffort 内部咽掉。
+    //  - 探测 git：一次性进程握手完成后才等它。
+    //  - 冷启动一次性 app-server（createBoundSession 里的 start()）。
+    const reasoningEffort = resolveNewSessionReasoningEffort({
+      setting: configuration().get<string>('newSessionReasoningEffort'),
+      listThreads: async () =>
+        (await deps.api().listThreads({ limit: LAST_USED_SCAN_LIMIT })).data,
+      log: (message) => logger.info(`[codex app-server:new-session] ${message}`),
+    });
+    const gitInfo = gitInfoForWorkspace().then((info) => info ?? PLACEHOLDER_GIT_INFO);
 
     let spawned: ChildProcessLike | undefined;
     const oneShot = deps.launchAppServer({
@@ -110,19 +126,7 @@ export function wireNewSession(deps: NewSessionWiringDeps): NewSessionWiring {
     });
 
     try {
-      // 先学「上次用过的思考级别」，再把它写进新建的这个会话：面板打开时读到的就是它，
-      // 不会每次都退回面板自己的兜底档。学不到（或设置成 off）就照旧建一个没有级别的会话。
-      // 每一步失败都在 resolveNewSessionReasoningEffort 内部咽掉，不影响下面这条主流程。
-      const reasoningEffort = await resolveNewSessionReasoningEffort({
-        setting: configuration().get<string>('newSessionReasoningEffort'),
-        listThreads: async () =>
-          (
-            await createThreadApi(oneShot, {
-              pageSize: configuration().get<number>('pageSize') ?? DEFAULT_PAGE_SIZE,
-            }).listThreads({})
-          ).data,
-        log: (message) => logger.info(`[codex app-server:new-session] ${message}`),
-      });
+      // 级别写进新建的这个会话：面板打开时读到的就是它，不会每次都退回面板自己的兜底档
       return await createBoundSession(oneShot, {
         cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null,
         gitInfo,
@@ -177,8 +181,9 @@ export function wireNewSession(deps: NewSessionWiringDeps): NewSessionWiring {
 
   return {
     /**
-     * 建会话要先起一个一次性 app-server（实测约 1.2s，其中 metadata/update 占 0.8s），
-     * 这段时间没有任何界面反馈就会像卡死：给一个进度通知，做完自动消失。
+     * 建会话要先起一个一次性 app-server（实测：冷启动握手约 0.1~0.3s，start → metadata →
+     * resume 约 0.1s，退出约 0.05s），这段时间没有任何界面反馈就会像卡死：给一个进度通知，
+     * 做完自动消失。
      */
     newSession: () =>
       Promise.resolve(
