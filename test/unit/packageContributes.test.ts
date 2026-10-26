@@ -13,6 +13,9 @@ const manifest = JSON.parse(
   extensionDependencies?: string[];
   contributes: {
     commands: Array<{ command: string; icon?: string }>;
+    configuration: {
+      properties: Record<string, { type?: string; enum?: string[]; default?: unknown }>;
+    };
     menus: { 'view/title': MenuContribution[] };
     viewsContainers: { activitybar: Array<{ id: string; title: string }> };
     views: Record<
@@ -42,6 +45,12 @@ describe('packageContributes', () => {
 
   it('keeps_the_official_codex_extension_as_a_dependency', () => {
     expect(manifest.extensionDependencies).toContain('openai.chatgpt');
+  });
+
+  it('defaults_session_opening_to_editor_tabs', () => {
+    const mode = manifest.contributes.configuration.properties['codexHelper.sessionOpenMode'];
+    expect(mode?.enum).toEqual(['sidebar', 'editorTab']);
+    expect(mode?.default).toBe('editorTab');
   });
 
   // 侧边栏换成 Webview 后，行内菜单由 webview 自己画；标题栏只保留全局动作，
