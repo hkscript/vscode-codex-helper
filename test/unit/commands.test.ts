@@ -36,13 +36,22 @@ function makeNewSessionDeps() {
   // 默认「建不了会话」（不是 git 仓库）：走空白面板兜底那条路，
   // 这条默认值也让下面三条老用例原样成立。
   const createBoundSession = vi.fn(async () => null as string | null);
+  const beforeCreate = vi.fn();
   return {
-    deps: { executeCommand, showErrorMessage, uriApi: createFakeUriApi(), createNonce, createBoundSession },
+    deps: {
+      executeCommand,
+      showErrorMessage,
+      uriApi: createFakeUriApi(),
+      createNonce,
+      createBoundSession,
+      beforeCreate,
+    },
     calls,
     executeCommand,
     showErrorMessage,
     createNonce,
     createBoundSession,
+    beforeCreate,
   };
 }
 
@@ -210,6 +219,32 @@ describe('commands', () => {
     ]);
     expect(createNonce).not.toHaveBeenCalled();
     expect(showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('runs_the_before_create_hook_before_creating_a_session', async () => {
+    const { deps, createBoundSession, beforeCreate } = makeNewSessionDeps();
+    const newSession = createNewSessionCommand(deps);
+
+    await newSession();
+
+    expect(beforeCreate).toHaveBeenCalledTimes(1);
+    expect(beforeCreate.mock.invocationCallOrder[0]).toBeLessThan(
+      createBoundSession.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('does_not_block_session_creation_when_the_before_create_hook_throws', async () => {
+    const { deps, calls, createBoundSession, beforeCreate } = makeNewSessionDeps();
+    beforeCreate.mockImplementation(() => {
+      throw new Error('patch hook exploded');
+    });
+    createBoundSession.mockResolvedValue('tid-1');
+    const newSession = createNewSessionCommand(deps);
+
+    await expect(newSession()).resolves.toBeUndefined();
+
+    expect(beforeCreate).toHaveBeenCalledTimes(1);
+    expect(executeOf(calls)).toEqual(['vscode.openWith', 'openai-codex://route/local/tid-1?']);
   });
 
   // REQ: 新建会话 / Scenario: 建会话失败时回退空白面板

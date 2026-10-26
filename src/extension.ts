@@ -159,10 +159,16 @@ export function activate(context: vscode.ExtensionContext): void {
     logger,
   });
 
+  const patchOnOpen = wirePatchOnOpen({
+    enabled: () => configuration().get<boolean>('patchCodexNoRetry') ?? true,
+    logger,
+  });
+
   const newSessions = wireNewSession({
     launchAppServer,
     configuration,
     logger,
+    beforeCreate: patchOnOpen,
     api,
     workspaceCwd,
     openTabs: tabs.openTabs,
@@ -204,10 +210,7 @@ export function activate(context: vscode.ExtensionContext): void {
     ownPid: () => appServer?.pid(),
     pinStore,
     tabs,
-    beforeOpen: wirePatchOnOpen({
-      enabled: () => configuration().get<boolean>('patchCodexNoRetry') ?? true,
-      logger,
-    }),
+    beforeOpen: patchOnOpen,
     view: provider,
   });
 

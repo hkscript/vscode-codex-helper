@@ -4,10 +4,10 @@ import { join } from 'node:path';
  * Codex 扩展宿主的 fetch 包装器「不重试」补丁。
  *
  * 为什么需要它（实测）：扩展宿主那段 fetch 包装器只在**网络异常**和
- * 408/425/429/5xx 上重试，次数上限是 `pj=3`（合计 4 次尝试），每次退避
+ * 408/425/429/5xx 上重试，次数上限是 3（合计 4 次尝试），每次退避
  * `min(2000, 300·2^n) ms`（≈300/600/1200）。在 `*.chatgpt.com` 连不通的网络里，
  * 新建会话面板要等这条 statsig 初始化走完 4 次尝试 + 退避 ≈2.1~3.4s 才挂载路由。
- * 把 `pj` 改成 0 后第一次失败即返回，这个等待窗口消失。
+ * 把次数上限改成 0 后第一次失败即返回，这个等待窗口消失。
  *
  * 这里只做**文本级定点替换**（与 `~/.local/bin/patch-codex-noretry.sh` 同一套串）：
  * 幂等、改前备份、写后校验、校验不过自动回滚；调用方在打开标签页时 fire-and-forget。
@@ -15,23 +15,34 @@ import { join } from 'node:path';
 
 export const NO_RETRY_FROM = 'pj=3,hyt=300,gyt=2e3';
 export const NO_RETRY_TO = 'pj=0,hyt=300,gyt=2e3';
+/** Codex 26.1021 起改了压缩变量名：`I9=3,aGt=300,uGt=2e3`。 */
+export const NO_RETRY_CURRENT_FROM = 'I9=3,aGt=300,uGt=2e3';
+export const NO_RETRY_CURRENT_TO = 'I9=0,aGt=300,uGt=2e3';
 export const NO_RETRY_BACKUP_SUFFIX = '.orig-noretry';
 export const CODEX_EXTENSION_ENTRY = 'out/extension.js';
+
+const NO_RETRY_SIGNATURES = [
+  { from: NO_RETRY_FROM, to: NO_RETRY_TO },
+  { from: NO_RETRY_CURRENT_FROM, to: NO_RETRY_CURRENT_TO },
+] as const;
 
 export type PatchState = 'patched' | 'unpatched' | 'unknown';
 
 /** 以文件内容判定状态：已打 / 可打 / 目标串不存在（上游换了打包形式）。 */
 export function readPatchState(content: string): PatchState {
-  if (content.includes(NO_RETRY_TO)) return 'patched';
-  if (content.includes(NO_RETRY_FROM)) return 'unpatched';
+  if (NO_RETRY_SIGNATURES.some(({ to }) => content.includes(to))) return 'patched';
+  if (NO_RETRY_SIGNATURES.some(({ from }) => content.includes(from))) return 'unpatched';
   return 'unknown';
 }
 
 /** 命中目标串时返回替换后的文本；否则 null —— 不猜、不做模糊匹配。 */
 export function patchNoRetryText(content: string): string | null {
-  const at = content.indexOf(NO_RETRY_FROM);
+  const signature = NO_RETRY_SIGNATURES.find(({ from }) => content.includes(from));
+  if (!signature) return null;
+  const at = content.indexOf(signature.from);
   if (at < 0) return null;
-  const patched = content.slice(0, at) + NO_RETRY_TO + content.slice(at + NO_RETRY_FROM.length);
+  const patched =
+    content.slice(0, at) + signature.to + content.slice(at + signature.from.length);
   return readPatchState(patched) === 'patched' ? patched : null;
 }
 
@@ -92,7 +103,7 @@ export function createNoRetryPatcher(deps: NoRetryPatchDeps): NoRetryPatcher {
     const state = readPatchState(original);
     if (state === 'patched') return 'already';
     if (state === 'unknown') {
-      deps.log(`未找到目标串 ${NO_RETRY_FROM}（Codex 扩展可能换了版本或打包形式），跳过`);
+      deps.log('未找到目标串（Codex 扩展可能换了版本或打包形式），跳过');
       return 'unknown';
     }
 

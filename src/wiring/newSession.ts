@@ -63,6 +63,8 @@ export interface NewSessionWiringDeps {
   launchAppServer: AppServerLauncher;
   configuration(): vscode.WorkspaceConfiguration;
   logger: Logger;
+  /** 建会话前的同步钩子；用于在 Codex 面板打开前确保「不重试」补丁已落盘。 */
+  beforeCreate?(): void;
   /** 共享 app-server 上的会话 API（盯新会话进列表用）。 */
   api(): Pick<ThreadApi, 'listThreads'>;
   workspaceCwd(): string | null;
@@ -157,6 +159,7 @@ export function wireNewSession(deps: NewSessionWiringDeps): NewSessionWiring {
     // nonce 让每次点击落到不同的 resource —— 同一 resource 在 Codex 那边只会聚焦已有标签
     uriApi: vscode.Uri,
     createNonce: () => randomUUID(),
+    beforeCreate: deps.beforeCreate,
     // 首选：直接建出一个能被面板打开的会话（标签从出生就绑定会话）；
     // 建出来之后盯到它进列表为止，否则侧边栏里要手动刷新才看得到这一行
     createBoundSession: async () => {

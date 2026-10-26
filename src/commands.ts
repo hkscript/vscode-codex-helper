@@ -120,6 +120,11 @@ export interface NewSessionCommandDeps {
   uriApi: UriApi;
   createNonce(): string;
   /**
+   * 建会话前的同步钩子（目前用来确保 Codex「不重试」补丁已落盘）。
+   * 与打开会话的钩子同契约：永不阻塞、异常不得影响建会话。
+   */
+  beforeCreate?(): void;
+  /**
    * 直接建出一个「面板能打开」的会话并返回它的 id；探测不到 gitInfo 或任一步失败时
    * 返回 `null`（此时回退空白面板）。这个依赖是流程里唯一会失败的部分，失败不打扰用户。
    */
@@ -128,6 +133,12 @@ export interface NewSessionCommandDeps {
 
 export function createNewSessionCommand(deps: NewSessionCommandDeps): () => Promise<void> {
   return async function newSession(): Promise<void> {
+    try {
+      deps.beforeCreate?.();
+    } catch {
+      // 补丁检查只是顺带动作，不能影响用户建会话
+    }
+
     // 1) 先试「直接建会话 → 开绑定标签」：标签从出生就绑定会话，标题由 Codex 自己写
     let boundId: string | null = null;
     try {

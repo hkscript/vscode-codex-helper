@@ -15,6 +15,9 @@ const DIR = '/ext/openai.chatgpt-26.908.40401-linux-x64';
 const TARGET = `${DIR}/out/extension.js`;
 const BACKUP = `${TARGET}${NO_RETRY_BACKUP_SUFFIX}`;
 const ORIGINAL = `var mh="codex_vscode",mPe="vscode://codex/",${NO_RETRY_FROM},gI=class{}`;
+const CURRENT_FROM = 'I9=3,aGt=300,uGt=2e3';
+const CURRENT_TO = 'I9=0,aGt=300,uGt=2e3';
+const CURRENT_ORIGINAL = `var mv="codex_vscode",oWe="vscode://codex/",${CURRENT_FROM},U1=class{}`;
 
 interface World {
   files: Map<string, string>;
@@ -77,6 +80,21 @@ describe('noRetryPatch', () => {
     expect(patchNoRetryText(`a,${NO_RETRY_FROM},b`)).toBe(`a,${NO_RETRY_TO},b`);
     expect(patchNoRetryText('a,pj=3,b')).toBeNull();
     expect(patchNoRetryText(`a,${NO_RETRY_TO},b`)).toBeNull();
+  });
+
+  it('recognises_the_retry_constants_in_the_current_codex_bundle', () => {
+    expect(readPatchState(`a,${CURRENT_FROM},b`)).toBe('unpatched');
+    expect(readPatchState(`a,${CURRENT_TO},b`)).toBe('patched');
+    expect(patchNoRetryText(`a,${CURRENT_FROM},b`)).toBe(`a,${CURRENT_TO},b`);
+  });
+
+  it('ensure_patches_the_current_codex_bundle_and_keeps_an_original_backup', async () => {
+    const world = makeWorld({ content: CURRENT_ORIGINAL });
+    const patcher = createNoRetryPatcher(world.deps);
+
+    await expect(patcher.ensure()).resolves.toBe('patched-now');
+    expect(world.files.get(TARGET)).toContain(CURRENT_TO);
+    expect(world.files.get(BACKUP)).toBe(CURRENT_ORIGINAL);
   });
 
   it('ensure_patches_once_creates_backup_and_caches_the_result', async () => {
