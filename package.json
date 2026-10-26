@@ -2,7 +2,7 @@
   "name": "vscode-codex-helper",
   "displayName": "Codex Helper",
   "description": "Manage Codex sessions as editor tabs — split, drag and compare them side by side, with a sidebar tree for quick switching.",
-  "version": "0.0.50",
+  "version": "0.0.51",
   "publisher": "hkscript",
   "license": "MIT",
   "icon": "resources/icon.png",
@@ -150,7 +150,7 @@
         "codexHelper.patchCodexNoRetry": {
           "type": "boolean",
           "default": true,
-          "description": "打开或新建会话时，关闭 Codex 扩展宿主与 Statsig 面板的请求重试（兼容不同打包结构，改前自动备份为 .orig-noretry）。改动需重载窗口生效。"
+          "description": "打开或新建会话时，关闭 Codex 扩展宿主与 Statsig 面板的请求重试，并把 Codex 面板的启动超时从 30 秒放宽到 120 秒（避免加载慢时整页变成「Codex could not start」；兼容不同打包结构，改前自动备份为 .orig-noretry）。改动需重载窗口生效。"
         },
         "codexHelper.runningStaleSeconds": {
           "type": "number",

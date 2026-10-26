@@ -9,6 +9,8 @@ import { join } from 'node:path';
  * 新建会话面板要等这条 statsig 初始化走完 4 次尝试 + 退避 ≈2.1~3.4s 才挂载路由。
  * 把次数上限改成 0 后第一次失败即返回，这个等待窗口消失。
  *
+ * 同一个扩展宿主文件里还顺带放宽面板的启动超时（见 `STARTUP_TIMEOUT_FROM`）。
+ *
  * 这里只做**文本级定点替换**（与 `~/.local/bin/patch-codex-noretry.sh` 同一套串）：
  * 幂等、改前备份、写后校验、校验不过自动回滚；调用方在打开标签页时 fire-and-forget。
  */
@@ -21,6 +23,16 @@ export const NO_RETRY_CURRENT_TO = 'I9=0,aGt=300,uGt=2e3';
 /** Webview 里 Statsig SDK 自己的初始化请求默认重试 2 次（合计 3 次）。 */
 export const STATSIG_RETRY_FROM = 'retries:2,isStatsigEncodable:!0';
 export const STATSIG_RETRY_TO = 'retries:0,isStatsigEncodable:!0';
+/**
+ * 面板 30 秒内没报 renderer ready，Codex 就把整个标签换成「Codex could not start」错误页，
+ * 只能关掉重开。26.1021 起面板启动要逐个加载约 3000 个模块，WSL 远程下常态 15~30s
+ * （本机日志里撞线过多次），放宽到 120s 只是让慢加载能等到加载完，正常路径不受影响。
+ * 锚点里是属性名（压缩不会改名），比压缩变量名稳定。
+ */
+export const STARTUP_TIMEOUT_FROM =
+  'receivedWebviewMessage:this.receivedWebviewMessage,timeoutMs:3e4})},3e4)';
+export const STARTUP_TIMEOUT_TO =
+  'receivedWebviewMessage:this.receivedWebviewMessage,timeoutMs:12e4})},12e4)';
 export const NO_RETRY_BACKUP_SUFFIX = '.orig-noretry';
 export const CODEX_EXTENSION_ENTRY = 'out/extension.js';
 const STATSIG_ASSET_DIR = 'webview/assets';
@@ -64,6 +76,38 @@ export function patchStatsigRetryText(content: string): string | null {
   return readStatsigRetryState(patched) === 'patched' ? patched : null;
 }
 
+export function readStartupTimeoutState(content: string): PatchState {
+  if (content.includes(STARTUP_TIMEOUT_TO)) return 'patched';
+  if (content.includes(STARTUP_TIMEOUT_FROM)) return 'unpatched';
+  return 'unknown';
+}
+
+export function patchStartupTimeoutText(content: string): string | null {
+  if (!content.includes(STARTUP_TIMEOUT_FROM)) return null;
+  const patched = content.replace(STARTUP_TIMEOUT_FROM, STARTUP_TIMEOUT_TO);
+  return readStartupTimeoutState(patched) === 'patched' ? patched : null;
+}
+
+/** 一个文件里的一处定点替换。 */
+interface FileEdit {
+  readState(content: string): PatchState;
+  patchText(content: string): string | null;
+  label: string;
+}
+
+const HOST_EDITS: readonly FileEdit[] = [
+  { readState: readPatchState, patchText: patchNoRetryText, label: 'Codex 扩展宿主重试配置串' },
+  {
+    readState: readStartupTimeoutState,
+    patchText: patchStartupTimeoutText,
+    label: 'Codex 面板启动超时',
+  },
+];
+
+const STATSIG_EDITS: readonly FileEdit[] = [
+  { readState: readStatsigRetryState, patchText: patchStatsigRetryText, label: 'Statsig 重试配置串' },
+];
+
 export type EnsureOutcome =
   /** 这次调用真的改了文件；需要重载窗口才生效 */
   | 'patched-now'
@@ -104,9 +148,7 @@ export function createNoRetryPatcher(deps: NoRetryPatchDeps): NoRetryPatcher {
 
   async function ensureFile(
     target: string,
-    readState: (content: string) => PatchState,
-    patchText: (content: string) => string | null,
-    label: string,
+    edits: readonly FileEdit[],
   ): Promise<'changed' | 'already' | 'unknown' | 'failed'> {
     const backup = `${target}${NO_RETRY_BACKUP_SUFFIX}`;
 
@@ -114,27 +156,40 @@ export function createNoRetryPatcher(deps: NoRetryPatchDeps): NoRetryPatcher {
     try {
       original = await deps.readFile(target);
     } catch (error) {
-      deps.log(`读取 ${target} 失败，跳过${label}：${reasonOf(error)}`);
+      const labels = edits.map((edit) => edit.label).join('、');
+      deps.log(`读取 ${target} 失败，跳过${labels}：${reasonOf(error)}`);
       return 'failed';
     }
 
-    const state = readState(original);
-    if (state === 'patched') return 'already';
-    if (state === 'unknown') {
-      deps.log(`未找到目标串（${label}，Codex 扩展可能换了版本或打包形式），跳过`);
-      return 'unknown';
+    // 同一文件里的几处替换互相独立：某一处找不到目标串只跳过那一处，不连累其它几处
+    let patched = original;
+    const applied: FileEdit[] = [];
+    let anyAlready = false;
+    for (const edit of edits) {
+      const state = edit.readState(patched);
+      if (state === 'patched') {
+        anyAlready = true;
+        continue;
+      }
+      const next = state === 'unpatched' ? edit.patchText(patched) : null;
+      if (next === null) {
+        deps.log(`未找到目标串（${edit.label}，Codex 扩展可能换了版本或打包形式），跳过`);
+        continue;
+      }
+      patched = next;
+      applied.push(edit);
     }
-
-    const patched = patchText(original);
-    if (patched === null) return 'unknown';
+    if (applied.length === 0) return anyAlready ? 'already' : 'unknown';
 
     // 语法基线：原文件本来就编译不过（例如上游产物含 ESM 语法）时，
     // 不能拿语法当验收标准，否则会把自己回滚成"永远打不上"。
     const baselineCompiles = deps.compiles(original);
 
+    // 回滚到**这次改动之前**的内容，而不是上游备份：文件里可能已有之前版本打上的
+    // 其它替换，退回上游原版会把它们一起丢掉。
     async function rollback(): Promise<void> {
       try {
-        await deps.copyFile(backup, target);
+        await deps.writeFile(target, original);
         deps.log(`校验未通过，已把 ${target} 回滚到补丁前`);
       } catch (error) {
         deps.log(`回滚失败，请手动用 ${backup} 恢复：${reasonOf(error)}`);
@@ -153,7 +208,9 @@ export function createNoRetryPatcher(deps: NoRetryPatchDeps): NoRetryPatcher {
 
     try {
       const after = await deps.readFile(target);
-      const ok = readState(after) === 'patched' && (!baselineCompiles || deps.compiles(after));
+      const ok =
+        applied.every((edit) => edit.readState(after) === 'patched') &&
+        (!baselineCompiles || deps.compiles(after));
       if (!ok) {
         await rollback();
         return 'failed';
@@ -164,7 +221,8 @@ export function createNoRetryPatcher(deps: NoRetryPatchDeps): NoRetryPatcher {
       return 'failed';
     }
 
-    deps.log(`已给 Codex 扩展打上「不重试」补丁：${target}（备份 ${NO_RETRY_BACKUP_SUFFIX}）`);
+    const labels = applied.map((edit) => edit.label).join('、');
+    deps.log(`已给 Codex 扩展打上补丁（${labels}）：${target}（备份 ${NO_RETRY_BACKUP_SUFFIX}）`);
     return 'changed';
   }
 
@@ -176,14 +234,7 @@ export function createNoRetryPatcher(deps: NoRetryPatchDeps): NoRetryPatcher {
     }
 
     const results: Array<'changed' | 'already' | 'unknown' | 'failed'> = [];
-    results.push(
-      await ensureFile(
-        join(dir, CODEX_EXTENSION_ENTRY),
-        readPatchState,
-        patchNoRetryText,
-        'Codex 扩展宿主重试配置串',
-      ),
-    );
+    results.push(await ensureFile(join(dir, CODEX_EXTENSION_ENTRY), HOST_EDITS));
 
     let assets: string[] = [];
     try {
@@ -196,9 +247,7 @@ export function createNoRetryPatcher(deps: NoRetryPatchDeps): NoRetryPatcher {
     }
 
     for (const asset of assets) {
-      results.push(
-        await ensureFile(asset, readStatsigRetryState, patchStatsigRetryText, 'Statsig 重试配置串'),
-      );
+      results.push(await ensureFile(asset, STATSIG_EDITS));
     }
 
     if (results.includes('failed')) return 'failed';
@@ -240,7 +289,9 @@ export function createPatchOnOpen(deps: PatchOnOpenDeps): () => void {
           // 只在"这次真的改了文件"时提示一次：它需要重载窗口才生效。
           if (outcome === 'patched-now' && !notified) {
             notified = true;
-            deps.notify('已为 Codex 面板关闭请求重试（原文件已备份），重载窗口后生效。');
+            deps.notify(
+              '已为 Codex 面板关闭请求重试、把启动超时放宽到 120 秒（原文件已备份），重载窗口后生效。',
+            );
           }
         })
         .catch((error: unknown) => {

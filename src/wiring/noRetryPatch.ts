@@ -7,7 +7,7 @@ import { createNoRetryPatcher, createPatchOnOpen } from '../codex/noRetryPatch';
 import type { Logger } from '../log';
 
 /**
- * 打开标签页时顺带确保 Codex 扩展的「不重试」补丁已打上（design D50）。
+ * 打开标签页时顺带确保 Codex 扩展的「不重试」与「启动超时」补丁已打上（design D50）。
  * 它是 fire-and-forget 的后台动作：幂等、带备份、失败只记日志，绝不拖慢或阻断打开。
  */
 export function wirePatchOnOpen(deps: { enabled(): boolean; logger: Logger }): () => void {

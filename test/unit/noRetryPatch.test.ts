@@ -3,10 +3,14 @@ import {
   NO_RETRY_BACKUP_SUFFIX,
   NO_RETRY_FROM,
   NO_RETRY_TO,
+  STARTUP_TIMEOUT_FROM,
+  STARTUP_TIMEOUT_TO,
   createNoRetryPatcher,
   createPatchOnOpen,
   patchNoRetryText,
+  patchStartupTimeoutText,
   readPatchState,
+  readStartupTimeoutState,
   type EnsureOutcome,
   type NoRetryPatchDeps,
 } from '../../src/codex/noRetryPatch';
@@ -22,6 +26,9 @@ const CURRENT_TO = 'I9=0,aGt=300,uGt=2e3';
 const CURRENT_ORIGINAL = `var mv="codex_vscode",oWe="vscode://codex/",${CURRENT_FROM},U1=class{}`;
 const STATSIG_ORIGINAL =
   'post({sdkKey:e,retries:2,isStatsigEncodable:!0,priority:a});post({sdkKey:e,retries:2,isStatsigEncodable:!0,priority:c});';
+/** 26.1021 扩展宿主里面板启动计时器的原文（压缩变量名之外的部分逐字取自 bundle）。 */
+const TIMER_ORIGINAL = `var K2=class{start(){let e=Date.now();this.timeout=setTimeout(()=>{this.timeout=void 0,this.onTimeout({elapsedMs:Date.now()-e,${STARTUP_TIMEOUT_FROM}}};`;
+const HOST_ORIGINAL = `${CURRENT_ORIGINAL};${TIMER_ORIGINAL}`;
 
 interface World {
   files: Map<string, string>;
@@ -177,6 +184,68 @@ describe('noRetryPatch', () => {
 
     await expect(patcher.ensure()).resolves.toBe('failed');
     expect(world.files.get(TARGET)).toBe(ORIGINAL);
+    expect(world.logs.join('\n')).toContain('回滚');
+  });
+
+  it('recognises_and_widens_the_panel_startup_timeout', () => {
+    expect(readStartupTimeoutState(TIMER_ORIGINAL)).toBe('unpatched');
+    const patched = patchStartupTimeoutText(TIMER_ORIGINAL)!;
+    // 上报用的 timeoutMs 和真正的 setTimeout 时长一起改，日志里的数字才对得上
+    expect(patched).toContain('timeoutMs:12e4})},12e4)');
+    expect(patched).not.toContain('3e4');
+    expect(readStartupTimeoutState(patched)).toBe('patched');
+    expect(patchStartupTimeoutText(patched)).toBeNull();
+    expect(readStartupTimeoutState('setTimeout(f,3e4)')).toBe('unknown');
+  });
+
+  it('applies_retry_and_startup_timeout_edits_to_the_host_in_one_write', async () => {
+    const world = makeWorld({ content: HOST_ORIGINAL });
+    const patcher = createNoRetryPatcher(world.deps);
+
+    await expect(patcher.ensure()).resolves.toBe('patched-now');
+    expect(world.files.get(TARGET)).toContain(CURRENT_TO);
+    expect(world.files.get(TARGET)).toContain(STARTUP_TIMEOUT_TO);
+    expect(world.files.get(BACKUP)).toBe(HOST_ORIGINAL);
+    expect(world.io).toEqual({ writes: 1, copies: 1 });
+  });
+
+  // 已经装过旧版本插件的机器：重试补丁早就打上了，这次只补启动超时，备份仍是上游原版
+  it('adds_the_startup_timeout_to_a_host_that_already_has_the_retry_patch', async () => {
+    const world = makeWorld({
+      content: HOST_ORIGINAL.replace(CURRENT_FROM, CURRENT_TO),
+      backup: HOST_ORIGINAL,
+    });
+    const patcher = createNoRetryPatcher(world.deps);
+
+    await expect(patcher.ensure()).resolves.toBe('patched-now');
+    expect(world.files.get(TARGET)).toContain(CURRENT_TO);
+    expect(world.files.get(TARGET)).toContain(STARTUP_TIMEOUT_TO);
+    expect(world.files.get(BACKUP)).toBe(HOST_ORIGINAL);
+    expect(world.io.copies).toBe(0);
+  });
+
+  it('a_missing_timer_does_not_block_the_retry_patch', async () => {
+    // 旧版 Codex 没有这个计时器：只跳过这一处
+    const world = makeWorld({ content: CURRENT_ORIGINAL });
+    const patcher = createNoRetryPatcher(world.deps);
+
+    await expect(patcher.ensure()).resolves.toBe('patched-now');
+    expect(world.files.get(TARGET)).toContain(CURRENT_TO);
+    expect(world.logs.join('\n')).toContain('Codex 面板启动超时');
+  });
+
+  it('rollback_restores_the_pre_edit_text_and_keeps_earlier_edits', async () => {
+    const retryPatched = HOST_ORIGINAL.replace(CURRENT_FROM, CURRENT_TO);
+    const world = makeWorld({
+      content: retryPatched,
+      backup: HOST_ORIGINAL,
+      compiles: (content) => !content.includes(STARTUP_TIMEOUT_TO),
+    });
+    const patcher = createNoRetryPatcher(world.deps);
+
+    await expect(patcher.ensure()).resolves.toBe('failed');
+    // 退回这次改动之前，而不是上游备份：早先打上的重试补丁不能被一起丢掉
+    expect(world.files.get(TARGET)).toBe(retryPatched);
     expect(world.logs.join('\n')).toContain('回滚');
   });
 
