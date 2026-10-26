@@ -97,6 +97,9 @@ export function wireNewSession(deps: NewSessionWiringDeps): NewSessionWiring {
     let spawned: ChildProcessLike | undefined;
     const oneShot = deps.launchAppServer({
       logTag: 'codex app-server:new-session',
+      // 这个进程只负责 thread/start → metadata → resume，不需要任何插件能力。
+      // 插件远程同步在 *.chatgpt.com / GitHub 不通时会让建会话冷启动多等十几秒。
+      args: ['--disable', 'plugins'],
       // `thread/settings/update`（把思考级别写进新建的会话）要求声明这个能力
       experimentalApi: true,
       onSpawn: (child) => {

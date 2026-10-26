@@ -18,8 +18,13 @@ export const NO_RETRY_TO = 'pj=0,hyt=300,gyt=2e3';
 /** Codex 26.1021 起改了压缩变量名：`I9=3,aGt=300,uGt=2e3`。 */
 export const NO_RETRY_CURRENT_FROM = 'I9=3,aGt=300,uGt=2e3';
 export const NO_RETRY_CURRENT_TO = 'I9=0,aGt=300,uGt=2e3';
+/** Webview 里 Statsig SDK 自己的初始化请求默认重试 2 次（合计 3 次）。 */
+export const STATSIG_RETRY_FROM = 'retries:2,isStatsigEncodable:!0';
+export const STATSIG_RETRY_TO = 'retries:0,isStatsigEncodable:!0';
 export const NO_RETRY_BACKUP_SUFFIX = '.orig-noretry';
 export const CODEX_EXTENSION_ENTRY = 'out/extension.js';
+const STATSIG_ASSET_DIR = 'webview/assets';
+const STATSIG_ASSET_PREFIX = 'statsig-';
 
 const NO_RETRY_SIGNATURES = [
   { from: NO_RETRY_FROM, to: NO_RETRY_TO },
@@ -46,6 +51,19 @@ export function patchNoRetryText(content: string): string | null {
   return readPatchState(patched) === 'patched' ? patched : null;
 }
 
+/** Statsig 文件里同时有初始化与 live overlay 两处 `retries:2`，必须全部改掉。 */
+export function readStatsigRetryState(content: string): PatchState {
+  if (content.includes(STATSIG_RETRY_FROM)) return 'unpatched';
+  if (content.includes(STATSIG_RETRY_TO)) return 'patched';
+  return 'unknown';
+}
+
+export function patchStatsigRetryText(content: string): string | null {
+  if (!content.includes(STATSIG_RETRY_FROM)) return null;
+  const patched = content.replaceAll(STATSIG_RETRY_FROM, STATSIG_RETRY_TO);
+  return readStatsigRetryState(patched) === 'patched' ? patched : null;
+}
+
 export type EnsureOutcome =
   /** 这次调用真的改了文件；需要重载窗口才生效 */
   | 'patched-now'
@@ -65,6 +83,8 @@ export interface NoRetryPatchDeps {
   writeFile(path: string, content: string): Promise<void>;
   copyFile(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;
+  /** 列出目录里的绝对文件路径；用于发现带 hash 的 Webview 资源。 */
+  listFiles(path: string): Promise<string[]>;
   /** 只编译不执行的语法校验：false 表示这份文本不可用。 */
   compiles(content: string): boolean;
   log(message: string): void;
@@ -82,32 +102,30 @@ function reasonOf(error: unknown): string {
 export function createNoRetryPatcher(deps: NoRetryPatchDeps): NoRetryPatcher {
   let cached: Promise<EnsureOutcome> | undefined;
 
-  async function run(): Promise<EnsureOutcome> {
-    const dir = deps.extensionPath();
-    if (!dir) {
-      deps.log('未找到 Codex 扩展，跳过「不重试」补丁');
-      return 'skipped';
-    }
-
-    const target = join(dir, CODEX_EXTENSION_ENTRY);
+  async function ensureFile(
+    target: string,
+    readState: (content: string) => PatchState,
+    patchText: (content: string) => string | null,
+    label: string,
+  ): Promise<'changed' | 'already' | 'unknown' | 'failed'> {
     const backup = `${target}${NO_RETRY_BACKUP_SUFFIX}`;
 
     let original: string;
     try {
       original = await deps.readFile(target);
     } catch (error) {
-      deps.log(`读取 ${target} 失败，跳过「不重试」补丁：${reasonOf(error)}`);
+      deps.log(`读取 ${target} 失败，跳过${label}：${reasonOf(error)}`);
       return 'failed';
     }
 
-    const state = readPatchState(original);
+    const state = readState(original);
     if (state === 'patched') return 'already';
     if (state === 'unknown') {
-      deps.log('未找到目标串（Codex 扩展可能换了版本或打包形式），跳过');
+      deps.log(`未找到目标串（${label}，Codex 扩展可能换了版本或打包形式），跳过`);
       return 'unknown';
     }
 
-    const patched = patchNoRetryText(original);
+    const patched = patchText(original);
     if (patched === null) return 'unknown';
 
     // 语法基线：原文件本来就编译不过（例如上游产物含 ESM 语法）时，
@@ -135,7 +153,7 @@ export function createNoRetryPatcher(deps: NoRetryPatchDeps): NoRetryPatcher {
 
     try {
       const after = await deps.readFile(target);
-      const ok = readPatchState(after) === 'patched' && (!baselineCompiles || deps.compiles(after));
+      const ok = readState(after) === 'patched' && (!baselineCompiles || deps.compiles(after));
       if (!ok) {
         await rollback();
         return 'failed';
@@ -147,7 +165,46 @@ export function createNoRetryPatcher(deps: NoRetryPatchDeps): NoRetryPatcher {
     }
 
     deps.log(`已给 Codex 扩展打上「不重试」补丁：${target}（备份 ${NO_RETRY_BACKUP_SUFFIX}）`);
-    return 'patched-now';
+    return 'changed';
+  }
+
+  async function run(): Promise<EnsureOutcome> {
+    const dir = deps.extensionPath();
+    if (!dir) {
+      deps.log('未找到 Codex 扩展，跳过「不重试」补丁');
+      return 'skipped';
+    }
+
+    const results: Array<'changed' | 'already' | 'unknown' | 'failed'> = [];
+    results.push(
+      await ensureFile(
+        join(dir, CODEX_EXTENSION_ENTRY),
+        readPatchState,
+        patchNoRetryText,
+        'Codex 扩展宿主重试配置串',
+      ),
+    );
+
+    let assets: string[] = [];
+    try {
+      assets = (await deps.listFiles(join(dir, STATSIG_ASSET_DIR))).filter((path) => {
+        const name = path.slice(path.lastIndexOf('/') + 1);
+        return name.startsWith(STATSIG_ASSET_PREFIX) && name.endsWith('.js');
+      });
+    } catch (error) {
+      deps.log(`读取 Codex Webview 资源目录失败，跳过 Statsig 补丁：${reasonOf(error)}`);
+    }
+
+    for (const asset of assets) {
+      results.push(
+        await ensureFile(asset, readStatsigRetryState, patchStatsigRetryText, 'Statsig 重试配置串'),
+      );
+    }
+
+    if (results.includes('failed')) return 'failed';
+    if (results.includes('changed')) return 'patched-now';
+    if (results.includes('already')) return 'already';
+    return 'unknown';
   }
 
   return {

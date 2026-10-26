@@ -35,6 +35,8 @@ export interface SpawnLike {
 export interface AppServerClientOptions {
   binaryPath: string;
   spawn: SpawnLike;
+  /** Additional argv after `app-server`, e.g. feature flags for a one-shot process. */
+  args?: string[];
   requestTimeoutMs?: number;
   /**
    * Handshake identity. Required on purpose: the version has to come from
@@ -189,7 +191,7 @@ export function createAppServerClient(options: AppServerClientOptions): AppServe
     if (startPromise) return startPromise;
 
     startPromise = new Promise<InitializeResult>((resolve, reject) => {
-      const spawned = options.spawn(options.binaryPath, ['app-server'], {
+      const spawned = options.spawn(options.binaryPath, ['app-server', ...(options.args ?? [])], {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       child = spawned;

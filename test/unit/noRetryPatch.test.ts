@@ -14,10 +14,14 @@ import {
 const DIR = '/ext/openai.chatgpt-26.908.40401-linux-x64';
 const TARGET = `${DIR}/out/extension.js`;
 const BACKUP = `${TARGET}${NO_RETRY_BACKUP_SUFFIX}`;
+const STATSIG_TARGET = `${DIR}/webview/assets/statsig-5c529db404a8.js`;
+const STATSIG_BACKUP = `${STATSIG_TARGET}${NO_RETRY_BACKUP_SUFFIX}`;
 const ORIGINAL = `var mh="codex_vscode",mPe="vscode://codex/",${NO_RETRY_FROM},gI=class{}`;
 const CURRENT_FROM = 'I9=3,aGt=300,uGt=2e3';
 const CURRENT_TO = 'I9=0,aGt=300,uGt=2e3';
 const CURRENT_ORIGINAL = `var mv="codex_vscode",oWe="vscode://codex/",${CURRENT_FROM},U1=class{}`;
+const STATSIG_ORIGINAL =
+  'post({sdkKey:e,retries:2,isStatsigEncodable:!0,priority:a});post({sdkKey:e,retries:2,isStatsigEncodable:!0,priority:c});';
 
 interface World {
   files: Map<string, string>;
@@ -33,11 +37,13 @@ function makeWorld(
     backup?: string;
     extensionPath?: string | undefined;
     compiles?: (content: string) => boolean;
+    extraFiles?: Record<string, string>;
   } = {},
 ): World {
   const files = new Map<string, string>();
   if (options.content !== undefined) files.set(TARGET, options.content);
   if (options.backup !== undefined) files.set(BACKUP, options.backup);
+  for (const [path, content] of Object.entries(options.extraFiles ?? {})) files.set(path, content);
 
   const io = { writes: 0, copies: 0 };
   const logs: string[] = [];
@@ -61,6 +67,7 @@ function makeWorld(
       files.set(to, value);
     },
     exists: async (path) => files.has(path),
+    listFiles: async () => [...files.keys()].filter((path) => !path.endsWith(NO_RETRY_BACKUP_SUFFIX)),
     compiles: options.compiles ?? (() => true),
     log: (message) => logs.push(message),
   };
@@ -95,6 +102,19 @@ describe('noRetryPatch', () => {
     await expect(patcher.ensure()).resolves.toBe('patched-now');
     expect(world.files.get(TARGET)).toContain(CURRENT_TO);
     expect(world.files.get(BACKUP)).toBe(CURRENT_ORIGINAL);
+  });
+
+  it('disables_every_statsig_retry_in_the_webview_bundle', async () => {
+    const world = makeWorld({
+      content: CURRENT_ORIGINAL,
+      extraFiles: { [STATSIG_TARGET]: STATSIG_ORIGINAL },
+    });
+    const patcher = createNoRetryPatcher(world.deps);
+
+    await expect(patcher.ensure()).resolves.toBe('patched-now');
+    expect(world.files.get(STATSIG_TARGET)).not.toContain('retries:2');
+    expect(world.files.get(STATSIG_TARGET)?.match(/retries:0/g)).toHaveLength(2);
+    expect(world.files.get(STATSIG_BACKUP)).toBe(STATSIG_ORIGINAL);
   });
 
   it('ensure_patches_once_creates_backup_and_caches_the_result', async () => {

@@ -18,6 +18,8 @@ export interface AppServerLauncherDeps {
 export interface AppServerLaunchOptions {
   /** stderr 每一行进日志时的前缀。 */
   logTag: string;
+  /** Additional argv after `app-server` (for process-local feature overrides). */
+  args?: string[];
   experimentalApi?: boolean;
   /** 拿到真正起出来的子进程（一次性进程要等它退出）。 */
   onSpawn?(child: ChildProcessLike): void;
@@ -49,6 +51,7 @@ export function createAppServerLauncher(deps: AppServerLauncherDeps): AppServerL
         return child as never;
       }) as never,
       clientInfo: { name: CLIENT_NAME, version: deps.version },
+      args: options.args,
       experimentalApi: options.experimentalApi,
       onStderrLine: (line: string) => deps.logger.info(`[${options.logTag}] ${line}`),
     });

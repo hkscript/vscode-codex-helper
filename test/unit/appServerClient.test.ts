@@ -76,6 +76,20 @@ describe('appServerClient', () => {
     });
   });
 
+  it('forwards_extra_app_server_arguments', () => {
+    const fake = createFakeSpawn();
+    const client = createAppServerClient({
+      binaryPath: '/ext/openai.chatgpt/bin/linux-x86_64/codex',
+      spawn: fake.spawn as never,
+      clientInfo: { name: CLIENT_NAME, version: '9.9.9' },
+      args: ['--disable', 'plugins'],
+    });
+
+    void client.start();
+
+    expect(fake.calls[0]!.args).toEqual(['app-server', '--disable', 'plugins']);
+  });
+
   it('reassembles_message_split_across_chunks', async () => {
     const { client, child } = await started();
 

@@ -16,17 +16,22 @@ import {
 // app-server 子进程必须被替换：真实 spawn 会拉起 Codex 自带的二进制。这个假进程
 // 由测试逐条回包（先 initialize 握手，再业务方法），形状与 appServerClient.test.ts 一致。
 // 每次 spawn 都给一个新假进程：「新建会话」会额外起一个一次性 app-server。
-const spawnedChildren = vi.hoisted(() => ({ list: [] as FakeChildProcess[] }));
+const spawnedChildren = vi.hoisted(() => ({
+  list: [] as FakeChildProcess[],
+  calls: [] as Array<{ args: string[] }>,
+}));
 vi.mock('node:child_process', async () => {
   const { createFakeChildProcess } = await import('../helpers/fakes');
   return {
-    spawn: () => {
+    spawn: (_command: string, args: string[]) => {
       const child = createFakeChildProcess(4000 + spawnedChildren.list.length);
       spawnedChildren.list.push(child);
+      spawnedChildren.calls.push({ args });
       return child;
     },
     __child: () => spawnedChildren.list[0],
     __children: () => spawnedChildren.list,
+    __calls: () => spawnedChildren.calls,
   };
 });
 
@@ -602,6 +607,13 @@ describe('extension', () => {
     // 恰好新起一个进程：共享的那个 app-server 不能被用来落盘（它会一直持有 writer 锁）
     expect(children.length - before).toBe(1);
     const oneShot = children[before]!;
+    const spawnCalls = (
+      (await import('node:child_process')) as unknown as {
+        __calls(): Array<{ args: string[] }>;
+      }
+    ).__calls();
+    // 一次性 app-server 只负责落盘会话，不需要远程插件同步；后者在网络异常时会拖慢建会话。
+    expect(spawnCalls.at(-1)?.args).toEqual(['app-server', '--disable', 'plugins']);
     const requests = [
       ...(await answerChildRound(oneShot)),
       // 建会话之前先读一眼「上次用过的思考级别」（本轮没有任何历史级别）

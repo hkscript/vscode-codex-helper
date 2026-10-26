@@ -1,4 +1,5 @@
-import { access, copyFile, readFile, writeFile } from 'node:fs/promises';
+import { access, copyFile, readFile, readdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Script } from 'node:vm';
 import * as vscode from 'vscode';
 import { CODEX_EXTENSION_ID } from '../codex/binary';
@@ -25,6 +26,8 @@ export function wirePatchOnOpen(deps: { enabled(): boolean; logger: Logger }): (
           return false;
         }
       },
+      listFiles: async (dir) =>
+        (await readdir(dir)).map((name) => join(dir, name)),
       compiles: (content) => {
         try {
           new Script(content);
