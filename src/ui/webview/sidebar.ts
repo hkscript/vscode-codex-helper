@@ -10,6 +10,7 @@ import type {
   SessionAction,
   SessionGroupData,
   SessionRowData,
+  SessionSearchMode,
   WebviewMessage,
 } from './protocol';
 
@@ -26,6 +27,7 @@ function el<T extends HTMLElement = HTMLElement>(id: string): T {
 let data: RenderMessage | null = null;
 let expanded: Record<string, boolean> = {};
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let hoverRow: HTMLElement | null = null;
 let hoverRequestId = 0;
 
@@ -46,7 +48,6 @@ function svg(path: string): SVGSVGElement {
   return node;
 }
 const ICONS = {
-  plus: 'M8 2.5v11M2.5 8h11',
   search: 'M7 12.2a5.2 5.2 0 1 0 0-10.4 5.2 5.2 0 0 0 0 10.4Zm3.8-1.4 3 3',
   filter: 'M2.5 3.5h11L9 8.7v3.4l-2 .9V8.7L2.5 3.5Z',
   close: 'M3.5 3.5l9 9m0-9-9 9',
@@ -68,10 +69,28 @@ function appendIcon(host: HTMLElement, name: keyof typeof ICONS): void {
   host.appendChild(svg(ICONS[name]));
 }
 
+function searchPlaceholder(mode: SessionSearchMode): string {
+  return mode === 'content' ? '搜内容...' : '搜标题...';
+}
+
+function searchModeLabel(mode: SessionSearchMode): string {
+  return mode === 'content' ? '搜内容' : '搜标题';
+}
+
+function syncSearchModeUi(mode: SessionSearchMode): void {
+  const input = el<HTMLInputElement>('search');
+  const icon = el('search-icon');
+  input.placeholder = searchPlaceholder(mode);
+  input.setAttribute('aria-label', searchModeLabel(mode));
+  icon.title = '选择搜索范围';
+  icon.setAttribute('aria-label', `选择搜索范围，当前：${searchModeLabel(mode)}`);
+}
+
 function render(payload: RenderMessage): void {
   data = payload;
   expanded = payload.expanded || {};
   hidePreview();
+  syncSearchModeUi(payload.searchMode);
   if (document.activeElement !== el('search')) {
     el<HTMLInputElement>('search').value = payload.filter || '';
   }
@@ -113,11 +132,20 @@ function renderList(payload: RenderMessage): void {
     list.appendChild(status('加载中…'));
     return;
   }
+  const searchingContent = payload.searchingContent === true;
   const filtering =
     (payload.filter || '').trim().length > 0 || (payload.cwdFilter || []).length > 0;
   if (!payload.groups || payload.groups.length === 0) {
     list.appendChild(
-      status(filtering ? (payload.loadingAll ? '正在加载全部会话…' : '没有匹配的会话') : '还没有会话'),
+      status(
+        filtering
+          ? searchingContent
+            ? '正在搜索内容…'
+            : payload.loadingAll
+              ? '正在加载全部会话…'
+              : '没有匹配的会话'
+          : '还没有会话',
+      ),
     );
     if (!filtering) {
       if (payload.hasMore) list.appendChild(loadMoreButton(false, '加载更多'));
@@ -146,7 +174,8 @@ function renderList(payload: RenderMessage): void {
   if (!filtering && payload.archivedHasMore) {
     list.appendChild(loadMoreButton(true, '加载更多已归档'));
   }
-  if (filtering && payload.loadingAll) list.appendChild(status('正在加载全部会话…'));
+  if (filtering && searchingContent) list.appendChild(status('正在搜索内容…'));
+  else if (filtering && payload.loadingAll) list.appendChild(status('正在加载全部会话…'));
   syncLoadMoreVisibility(payload);
   list.scrollTop = scrollTop;
 }
@@ -485,6 +514,48 @@ function showCwdMenu(): void {
   menu.style.top = (rect.bottom + 2) + 'px';
 }
 
+function addSearchModeItem(
+  menu: HTMLElement,
+  mode: SessionSearchMode,
+  label: string,
+): void {
+  const item = document.createElement('button');
+  item.className = 'menu-item';
+  item.setAttribute('role', 'menuitemradio');
+  const active = (data?.searchMode ?? 'title') === mode;
+  item.setAttribute('aria-checked', active ? 'true' : 'false');
+  if (active) item.classList.add('active');
+  const check = document.createElement('span');
+  check.className = 'check';
+  check.textContent = active ? '✓' : '';
+  const text = document.createElement('span');
+  text.className = 'label';
+  text.textContent = label;
+  item.appendChild(check);
+  item.appendChild(text);
+  item.onclick = (event) => {
+    event.stopPropagation();
+    hideMenus();
+    if (data) data.searchMode = mode;
+    syncSearchModeUi(mode);
+    post({ type: 'setSearchMode', mode });
+    el<HTMLInputElement>('search').focus();
+  };
+  menu.appendChild(item);
+}
+
+function showSearchModeMenu(): void {
+  const menu = el('search-mode-menu');
+  clear(menu);
+  addSearchModeItem(menu, 'title', '搜标题');
+  addSearchModeItem(menu, 'content', '搜内容');
+  menu.classList.remove('hidden');
+  const rect = el('search-icon').getBoundingClientRect();
+  menu.style.left =
+    Math.max(4, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 4)) + 'px';
+  menu.style.top = (rect.bottom + 2) + 'px';
+}
+
 function addCwdItem(
   menu: HTMLElement,
   path: string | null,
@@ -520,6 +591,7 @@ function addCwdItem(
 
 function hideMenus(): void {
   el('cwd-menu').classList.add('hidden');
+  el('search-mode-menu').classList.add('hidden');
   el('ctx-menu').classList.add('hidden');
 }
 
@@ -560,23 +632,39 @@ function updateRunning(ids: string[]): void {
   }
 }
 
-appendIcon(el('new-session-icon'), 'plus');
 appendIcon(el('search-icon'), 'search');
 appendIcon(el('clear-search'), 'close');
 appendIcon(el('cwd-filter-icon'), 'filter');
 appendIcon(el('cwd-chip-clear'), 'close');
 
-el('new-session').onclick = () => post({ type: 'newSession' });
 el('search').addEventListener('input', (event) => {
-  post({ type: 'setFilter', value: (event.target as HTMLInputElement).value });
+  const value = (event.target as HTMLInputElement).value;
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = null;
+  if (data?.searchMode === 'content') {
+    searchTimer = setTimeout(() => {
+      searchTimer = null;
+      post({ type: 'setFilter', value });
+    }, 250);
+    return;
+  }
+  post({ type: 'setFilter', value });
 });
 el('clear-search').onclick = () => {
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = null;
   el<HTMLInputElement>('search').value = '';
   post({ type: 'setFilter', value: '' });
   el('search').focus();
 };
-el('search-icon').onclick = () => {
-  el<HTMLInputElement>('search').focus();
+el('search-icon').onclick = (event) => {
+  event.stopPropagation();
+  if (el('search-mode-menu').classList.contains('hidden')) {
+    hideMenus();
+    showSearchModeMenu();
+  } else {
+    hideMenus();
+  }
 };
 el('cwd-filter').onclick = (event) => {
   event.stopPropagation();
@@ -597,6 +685,9 @@ document.addEventListener('click', (event) => {
     !el('cwd-chip').contains(target)
   ) {
     el('cwd-menu').classList.add('hidden');
+  }
+  if (!el('search-mode-menu').contains(target) && !el('search-icon').contains(target)) {
+    el('search-mode-menu').classList.add('hidden');
   }
   if (!el('ctx-menu').contains(target)) el('ctx-menu').classList.add('hidden');
 });

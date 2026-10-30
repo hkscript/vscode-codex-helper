@@ -37,6 +37,10 @@ export interface BuildSessionGroupsInput {
   pinnedIds: string[];
   runningIds?: Iterable<string> | null;
   filter?: string | null;
+  /** 只匹配列表中显示的标题，不搜索未展示的 preview 摘要。 */
+  titleOnly?: boolean;
+  /** 正文搜索命中的会话 id；提供时不再用 `filter` 重查标题字段。 */
+  matchingIds?: ReadonlySet<string> | null;
   /** 只保留工作目录在这些路径里的会话；空数组 = 不限目录。 */
   cwdFilter?: ReadonlyArray<string> | null;
 }
@@ -48,6 +52,14 @@ export function matchesFilter(
   const needle = (keyword ?? '').trim().toLowerCase();
   if (needle.length === 0) return true;
   return `${session.id} ${session.label} ${session.preview}`.toLowerCase().includes(needle);
+}
+
+export function matchesTitle(
+  session: Pick<FilterableSession, 'label'>,
+  keyword?: string | null,
+): boolean {
+  const needle = (keyword ?? '').trim().toLowerCase();
+  return needle.length === 0 || session.label.toLowerCase().includes(needle);
 }
 
 export function sessionItemLabel(thread: Thread | undefined, fallbackLabel?: string | null): string {
@@ -144,7 +156,13 @@ export function buildSessionGroups(input: BuildSessionGroupsInput): SessionGroup
       // 所有分组都过同一个谓词，否则「搜索后仍显示不匹配项」会在某个分组里出现。
       .map((group) => ({
         ...group,
-        sessions: group.sessions.filter((session) => matchesFilter(session, filter)),
+        sessions: group.sessions.filter((session) =>
+          input.matchingIds
+            ? input.matchingIds.has(session.id)
+            : input.titleOnly
+              ? matchesTitle(session, filter)
+              : matchesFilter(session, filter),
+        ),
       }))
       .filter((group) => group.sessions.length > 0)
   );

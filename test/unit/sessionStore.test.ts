@@ -354,6 +354,32 @@ describe('sessionStore', () => {
     expect(ids(byId, 'history')).toEqual(['t11']);
   });
 
+  it('uses_explicit_match_ids_without_rechecking_metadata_filter', () => {
+    const groups = buildSessionGroups({
+      threads: manyThreads(3),
+      openTabs: [],
+      pinnedIds: [],
+      filter: '不会命中任何标题',
+      matchingIds: new Set(['t3']),
+    });
+
+    expect(rows(groups).map((session) => session.id)).toEqual(['t3']);
+  });
+
+  it('title_filter_ignores_preview_when_a_session_has_a_name', () => {
+    const groups = buildSessionGroups({
+      threads: [
+        makeThread({ id: 't1', name: '价格排查', preview: '只存在于摘要里的词' }),
+      ],
+      openTabs: [],
+      pinnedIds: [],
+      filter: '只存在于摘要',
+      titleOnly: true,
+    });
+
+    expect(rows(groups)).toEqual([]);
+  });
+
   it('cwd_filter_keeps_only_sessions_from_the_exact_directory', () => {
     const groups = buildSessionGroups({
       threads: [

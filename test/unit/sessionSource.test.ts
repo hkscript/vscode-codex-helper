@@ -254,4 +254,41 @@ describe('sessionSource', () => {
     expect(directions.sort()).toEqual(['asc', 'desc']);
     expect(preview).toEqual({ userMessages: ['第一条', '第二条', '最后一条'], lastReply: '答复' });
   });
+
+  it('searches_content_in_user_inputs_and_final_answers', async () => {
+    const user = (text: string): ThreadItemRecord => ({
+      item: { type: 'userMessage', content: [{ type: 'text', text }] },
+    });
+    const reply = (text: string, phase?: string): ThreadItemRecord => ({
+      item: { type: 'agentMessage', text, phase },
+    });
+    const items: Record<string, ThreadItemRecord[]> = {
+      input: [user('历史输入里有 KNeedle')],
+      final: [reply('最终回复里有 KNeedle', 'final_answer')],
+      progress: [reply('中间过程里有关键词')],
+      commentary: [user('没有目标词'), reply('普通回复里有关键词')],
+    };
+    const orders: string[] = [];
+    const source = createSessionSource({
+      api: () => ({
+        listThreads: async () => ({ data: [], nextCursor: null }),
+        listItems: async (query) => {
+          orders.push(query.sortDirection ?? '');
+          return { data: items[query.threadId] ?? [], nextCursor: null };
+        },
+      }),
+      workspaceCwd: () => null,
+    });
+
+    const matched = await source.searchContent('kneedle', [
+      'input',
+      'final',
+      'progress',
+      'commentary',
+    ]);
+
+    expect(matched).toEqual(new Set(['input', 'final']));
+    expect(orders).toHaveLength(4);
+    expect(new Set(orders)).toEqual(new Set(['desc']));
+  });
 });

@@ -19,7 +19,12 @@ import {
   collectCwdOptions,
   formatRelativeTime,
 } from './sessionViewModel';
-import type { HostMessage, RenderMessage, SessionGroupData } from './webview/protocol';
+import type {
+  HostMessage,
+  RenderMessage,
+  SessionGroupData,
+  SessionSearchMode,
+} from './webview/protocol';
 
 /**
  * Raw data used to render the sidebar. The provider owns the view-only state
@@ -81,10 +86,14 @@ export interface SessionWebviewDeps {
   loadAll(): Promise<void>;
   /** 悬停预览：前两次 + 最后一次用户输入，以及模型最后回复。 */
   loadPreview(threadId: string): Promise<SessionPreview>;
+  searchContent(
+    keyword: string,
+    threadIds: readonly string[],
+    shouldStop?: () => boolean,
+  ): Promise<Set<string>>;
   snapshot(): SessionSnapshot;
   loadMore(archived: boolean): Promise<void> | void;
   openSession(request: SessionOpenRequest): Promise<void> | void;
-  newSession(): Promise<void> | void;
   renameSession(sessionId: string, label: string): Promise<void> | void;
   pinSession(sessionId: string): Promise<void> | void;
   unpinSession(sessionId: string): Promise<void> | void;
@@ -146,6 +155,10 @@ export function createSessionWebviewProvider(
   let renderedRunningKey: string | null = null;
   let view: vscode.WebviewView | undefined;
   let filter = '';
+  let searchMode: SessionSearchMode = 'title';
+  let matchingIds = new Set<string>();
+  let searchingContent = false;
+  let contentSearchVersion = 0;
   let cwdFilter: string[] = [...(deps.initialCwdFilter ?? [])];
   let loading = false;
   let loadingAll: Promise<void> | null = null;
@@ -208,10 +221,11 @@ export function createSessionWebviewProvider(
     return filter.trim().length > 0 || cwdFilter.length > 0;
   }
 
-  function ensureAllLoaded(): void {
-    if (!hasActiveFilter() || loadingAll) return;
+  function ensureAllLoaded(): Promise<void> {
+    if (!hasActiveFilter()) return Promise.resolve();
+    if (loadingAll) return loadingAll;
     const snapshot = deps.snapshot();
-    if (!snapshot.hasMore && !snapshot.archivedHasMore) return;
+    if (!snapshot.hasMore && !snapshot.archivedHasMore) return Promise.resolve();
     loadingAll = Promise.resolve(deps.loadAll())
       .catch((error) => {
         deps.logger?.error(`加载全部会话失败：${errorMessage(error)}`);
@@ -221,18 +235,69 @@ export function createSessionWebviewProvider(
         refresh();
       });
     render();
+    return loadingAll;
   }
 
   function buildGroups(snapshot: SessionSnapshot): SessionGroup[] {
+    const hasContentQuery = searchMode === 'content' && filter.trim().length > 0;
     return buildSessionGroups({
       threads: snapshot.threads,
       archivedThreads: snapshot.archivedThreads,
       openTabs: snapshot.openTabs,
       pinnedIds: snapshot.pinnedIds,
       runningIds: snapshot.runningIds,
-      filter,
+      filter: searchMode === 'content' ? null : filter,
+      matchingIds: hasContentQuery ? matchingIds : null,
+      titleOnly: searchMode === 'title',
       cwdFilter,
     });
+  }
+
+  function shouldStopContentSearch(version: number, query: string): boolean {
+    return (
+      version !== contentSearchVersion ||
+      searchMode !== 'content' ||
+      filter.trim() !== query
+    );
+  }
+
+  async function runContentSearch(): Promise<void> {
+    const query = filter.trim();
+    const version = ++contentSearchVersion;
+    matchingIds = new Set();
+    if (searchMode !== 'content' || query.length === 0) {
+      searchingContent = false;
+      render();
+      return;
+    }
+
+    searchingContent = true;
+    render();
+    await ensureAllLoaded();
+    if (shouldStopContentSearch(version, query)) return;
+
+    const snapshot = deps.snapshot();
+    const cwdSet = new Set(cwdFilter);
+    const threadIds = [...snapshot.threads, ...snapshot.archivedThreads]
+      .filter((thread) => cwdSet.size === 0 || cwdSet.has(thread.cwd))
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map((thread) => thread.id);
+    try {
+      const matched = await deps.searchContent(query, threadIds, () =>
+        shouldStopContentSearch(version, query),
+      );
+      if (shouldStopContentSearch(version, query)) return;
+      matchingIds = matched;
+    } catch (caught) {
+      if (shouldStopContentSearch(version, query)) return;
+      deps.logger?.error(`搜索内容失败：${errorMessage(caught)}`);
+      matchingIds = new Set();
+    } finally {
+      if (!shouldStopContentSearch(version, query)) {
+        searchingContent = false;
+        render();
+      }
+    }
   }
 
   function toRenderedGroups(groups: SessionGroup[], stamp: number): SessionGroupData[] {
@@ -265,6 +330,8 @@ export function createSessionWebviewProvider(
         snapshot.cwdArchivedThreads ?? snapshot.archivedThreads,
       ),
       filter,
+      searchMode,
+      searchingContent,
       cwdFilter,
       expanded: Object.fromEntries(groups.map((group) => [group.id, isExpanded(group.id)])),
       loading,
@@ -439,6 +506,7 @@ export function createSessionWebviewProvider(
     const incoming = message as {
       type?: unknown;
       value?: unknown;
+      mode?: unknown;
       cwd?: unknown;
       id?: unknown;
       expanded?: unknown;
@@ -459,8 +527,26 @@ export function createSessionWebviewProvider(
         break;
       case 'setFilter':
         filter = typeof incoming.value === 'string' ? incoming.value : '';
-        render();
-        ensureAllLoaded();
+        if (searchMode === 'content') {
+          void runContentSearch();
+        } else {
+          contentSearchVersion += 1;
+          matchingIds = new Set();
+          searchingContent = false;
+          render();
+          void ensureAllLoaded();
+        }
+        break;
+      case 'setSearchMode':
+        if (incoming.mode === 'title' || incoming.mode === 'content') {
+          searchMode = incoming.mode;
+          contentSearchVersion += 1;
+          matchingIds = new Set();
+          searchingContent = false;
+          render();
+          if (searchMode === 'content') void runContentSearch();
+          else void ensureAllLoaded();
+        }
         break;
       case 'toggleCwd':
         if (typeof incoming.cwd === 'string' && incoming.cwd.length > 0) {
@@ -486,9 +572,6 @@ export function createSessionWebviewProvider(
       }
       case 'action':
         await handleAction(incoming.action, incoming.session);
-        break;
-      case 'newSession':
-        await deps.newSession();
         break;
       case 'loadMore':
         await deps.loadMore(incoming.archived === true);
@@ -583,13 +666,20 @@ export function createSessionWebviewProvider(
 
     setFilter(value: string): void {
       filter = value;
-      render();
-      ensureAllLoaded();
+      if (searchMode === 'content') {
+        void runContentSearch();
+      } else {
+        render();
+        void ensureAllLoaded();
+      }
     },
 
     async clearFilters(): Promise<void> {
       const filterChanged = filter.length > 0;
       filter = '';
+      contentSearchVersion += 1;
+      matchingIds = new Set();
+      searchingContent = false;
       if (cwdFilter.length === 0) {
         if (filterChanged) render();
         return;

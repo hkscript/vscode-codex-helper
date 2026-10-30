@@ -142,6 +142,7 @@ export function activate(context: vscode.ExtensionContext): void {
     fetch: sessions.fetch,
     loadAll: sessions.loadAll,
     loadPreview: sessions.loadPreview,
+    searchContent: sessions.searchContent,
     snapshot: () => ({
       ...sessions.pages(),
       openTabs: tabs.openTabs(),
@@ -150,7 +151,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     loadMore,
     openSession: (request) => actions.openSession(request),
-    newSession: () => newSessions.newSession(),
     renameSession: (sessionId, label) => actions.renameSession(sessionId, label),
     pinSession: (sessionId) => actions.pinSession(sessionId),
     unpinSession: (sessionId) => actions.unpinSession(sessionId),

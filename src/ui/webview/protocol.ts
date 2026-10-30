@@ -29,11 +29,15 @@ export interface CwdOptionData {
   count: number;
 }
 
+export type SessionSearchMode = 'title' | 'content';
+
 export interface RenderMessage {
   type: 'render';
   groups: SessionGroupData[];
   cwds: CwdOptionData[];
   filter: string;
+  searchMode: SessionSearchMode;
+  searchingContent: boolean;
   cwdFilter: string[];
   expanded: Record<string, boolean>;
   loading: boolean;
@@ -79,8 +83,8 @@ export type WebviewMessage =
   | { type: 'ready' }
   | { type: 'retry' }
   | { type: 'tick' }
-  | { type: 'newSession' }
   | { type: 'setFilter'; value: string }
+  | { type: 'setSearchMode'; mode: SessionSearchMode }
   | { type: 'toggleCwd'; cwd: string }
   | { type: 'clearCwd' }
   | { type: 'toggleGroup'; id: string; expanded: boolean }

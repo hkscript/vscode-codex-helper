@@ -23,17 +23,6 @@ button {
   cursor: pointer;
 }
 .hidden { display: none !important; }
-.top { padding: 8px 0 2px; }
-.new-session {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  padding: 6px 7px;
-  border-radius: 4px;
-  text-align: left;
-}
-.new-session:hover { background: var(--vscode-list-hoverBackground); }
 .search-row {
   display: flex;
   align-items: center;

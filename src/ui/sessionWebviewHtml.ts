@@ -47,13 +47,6 @@ export function sessionWebviewHtml({
 <link rel="stylesheet" href="${escapeAttribute(styleUri)}" />
 </head>
 <body>
-  <div class="top">
-    <button id="new-session" class="new-session" title="新建会话">
-      <span id="new-session-icon"></span>
-      <span>New session</span>
-    </button>
-  </div>
-
   <div class="search-row">
     <button id="cwd-filter" class="filter-btn" title="按工作目录过滤" aria-label="按工作目录过滤">
       <span id="cwd-filter-icon"></span>
@@ -63,13 +56,14 @@ export function sessionWebviewHtml({
       <span id="cwd-chip-label" class="chip-label"></span>
       <button id="cwd-chip-clear" title="清除目录过滤" aria-label="清除目录过滤"></button>
     </span>
-    <input id="search" type="text" placeholder="Search sessions..." autocomplete="off" spellcheck="false" aria-label="搜索会话" />
+    <input id="search" type="text" placeholder="搜标题..." autocomplete="off" spellcheck="false" aria-label="搜标题" />
     <button id="clear-search" class="icon-btn hidden" title="清除搜索" aria-label="清除搜索"></button>
-    <button id="search-icon" class="search-icon" title="聚焦搜索框" aria-label="聚焦搜索框"></button>
+    <button id="search-icon" class="search-icon" title="选择搜索范围" aria-label="选择搜索范围"></button>
   </div>
 
   <div id="list" class="list" role="tree"></div>
   <div id="cwd-menu" class="menu hidden" role="menu"></div>
+  <div id="search-mode-menu" class="menu hidden" role="menu"></div>
   <div id="ctx-menu" class="menu hidden" role="menu"></div>
   <div id="session-tooltip" class="tooltip hidden" role="tooltip"></div>
 

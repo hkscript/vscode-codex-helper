@@ -6,6 +6,7 @@ import {
   userMessageText,
   type SessionPreview,
 } from './sessionPreview';
+import { mapWithLimit } from './mapWithLimit';
 
 /**
  * 侧边栏的数据源：未归档与已归档两批会话各自的已加载页和游标，外加悬停预览。
@@ -49,6 +50,15 @@ export interface SessionSource {
    * 首尾并行拉；尾部扫描到 `final_answer` 为止，找不到最终答复则退回最后一条助手消息。
    */
   loadPreview(threadId: string): Promise<SessionPreview>;
+  /**
+   * 按需搜索历史内容。范围是用户输入和每条输入对应的最终模型回复；
+   * 扫描从最新消息向前，命中一项就停止。`shouldStop` 用于放弃过期查询。
+   */
+  searchContent(
+    keyword: string,
+    threadIds: readonly string[],
+    shouldStop?: () => boolean,
+  ): Promise<Set<string>>;
   pages(): SessionPages;
 }
 
@@ -250,6 +260,49 @@ export function createSessionSource(deps: SessionSourceDeps): SessionSource {
         ),
       ]);
       return buildSessionPreview(first, tail);
+    },
+
+    async searchContent(keyword, threadIds, shouldStop) {
+      const needle = keyword.trim().toLowerCase();
+      const matched = new Set<string>();
+      if (!needle) return matched;
+
+      await mapWithLimit(threadIds, 5, async (threadId) => {
+        let cursor: string | null = null;
+        const seenCursors = new Set<string>();
+        while (!shouldStop?.()) {
+          let response;
+          try {
+            response = await deps.api().listItems({
+              threadId,
+              limit: 50,
+              sortDirection: 'desc',
+              cursor,
+            });
+          } catch {
+            // 单个历史会话读失败时继续搜其他会话，避免一个坏文件让整个查询失败
+            return;
+          }
+          if (shouldStop?.()) return;
+          if (
+            (response.data ?? []).some((item) => {
+              const userText = userMessageText(item);
+              if (userText?.toLowerCase().includes(needle)) return true;
+              if (item.item?.phase !== 'final_answer') return false;
+              return agentMessageText(item)?.toLowerCase().includes(needle) === true;
+            })
+          ) {
+            matched.add(threadId);
+            return;
+          }
+          const next = response.nextCursor ?? null;
+          if (!next || seenCursors.has(next)) return;
+          seenCursors.add(next);
+          cursor = next;
+        }
+      });
+
+      return matched;
     },
 
     setCwdFilter(nextCwdFilter) {

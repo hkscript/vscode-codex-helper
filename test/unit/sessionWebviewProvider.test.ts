@@ -104,7 +104,7 @@ async function resolvedProvider(
     snapshot: vi.fn(() => snapshot(overrides)),
     loadMore: vi.fn(async () => undefined),
     openSession: vi.fn(async () => undefined),
-    newSession: vi.fn(async () => undefined),
+    searchContent: vi.fn(async () => new Set<string>()),
     renameSession: vi.fn(async () => undefined),
     pinSession: vi.fn(async () => undefined),
     unpinSession: vi.fn(async () => undefined),
@@ -165,8 +165,9 @@ describe('sessionWebviewProvider', () => {
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
     expect(html).toContain(
-      '<button id="search-icon" class="search-icon" title="聚焦搜索框" aria-label="聚焦搜索框"></button>',
+      '<button id="search-icon" class="search-icon" title="选择搜索范围" aria-label="选择搜索范围"></button>',
     );
+    expect(html).toContain('id="search-mode-menu"');
 
     const css = readFileSync(
       new URL('../../src/ui/webview/sidebar.css', import.meta.url),
@@ -181,7 +182,7 @@ describe('sessionWebviewProvider', () => {
   it('renders_inline_search_groups_directory_options_and_relative_times', async () => {
     const { view, lastRender } = await resolvedProvider();
 
-    expect(view.webview.html).toContain('Search sessions...');
+    expect(view.webview.html).toContain('placeholder="搜标题..."');
     expect(view.webview.html).not.toContain('Active ·');
     const payload = lastRender()!;
     expect(payload.cwds).toEqual([
@@ -210,6 +211,24 @@ describe('sessionWebviewProvider', () => {
     expect(groups.flatMap((group) => group.sessions.map((session) => session.id))).toEqual(['t1']);
   });
 
+  it('searches_content_after_switching_the_search_mode', async () => {
+    const { send, deps, lastRender } = await resolvedProvider();
+    deps.searchContent.mockResolvedValueOnce(new Set(['t2']));
+
+    await send({ type: 'setSearchMode', mode: 'content' });
+    await send({ type: 'setFilter', value: '只存在于历史内容' });
+    await flush();
+
+    expect(deps.searchContent).toHaveBeenLastCalledWith(
+      '只存在于历史内容',
+      ['t1', 't2', 'z1'],
+      expect.any(Function),
+    );
+    expect(lastRender()!.searchMode).toBe('content');
+    const groups = lastRender()!.groups as Array<{ sessions: Array<{ id: string }> }>;
+    expect(groups.flatMap((group) => group.sessions.map((session) => session.id))).toEqual(['t2']);
+  });
+
   it('keeps_all_directory_options_when_the_visible_list_is_server_filtered', async () => {
     const { lastRender } = await resolvedProvider({
       threads: [makeThread({ id: 't1', name: '价格排查', cwd: '/work/alpha', updatedAt: 20 })],
@@ -236,13 +255,13 @@ describe('sessionWebviewProvider', () => {
     expect(messages.at(-1)).toMatchObject({ type: 'running', ids: ['t2'] });
   });
 
-  it('sends_only_protocol_session_fields_while_filtering_by_preview_on_the_host', async () => {
+  it('sends_only_protocol_session_fields_while_filtering_by_title_on_the_host', async () => {
     const { send, lastRender } = await resolvedProvider({
       threads: [
         makeThread({
           id: 't1',
-          name: '价格排查',
-          preview: '只存在于宿主侧的搜索关键词',
+          name: '只存在于宿主侧的搜索关键词',
+          preview: '摘要不应参与标题搜索',
           cwd: '/work/alpha',
           updatedAt: 20,
         }),
@@ -257,7 +276,7 @@ describe('sessionWebviewProvider', () => {
     expect(groups.flatMap((group) => group.sessions)).toEqual([
       {
         id: 't1',
-        label: '价格排查',
+        label: '只存在于宿主侧的搜索关键词',
         pinned: false,
         archived: false,
         running: true,
@@ -510,7 +529,7 @@ describe('sessionWebviewProvider', () => {
       snapshot: () => snapshot(),
       loadMore: vi.fn(),
       openSession: vi.fn(),
-      newSession: vi.fn(),
+      searchContent: vi.fn(async () => new Set<string>()),
       renameSession: vi.fn(),
       pinSession: vi.fn(),
       unpinSession: vi.fn(),
@@ -690,7 +709,7 @@ describe('sessionWebviewProvider', () => {
       snapshot: () => snapshot(),
       loadMore: vi.fn(),
       openSession: vi.fn(),
-      newSession: vi.fn(),
+      searchContent: vi.fn(async () => new Set<string>()),
       renameSession: vi.fn(),
       pinSession: vi.fn(),
       unpinSession: vi.fn(),
