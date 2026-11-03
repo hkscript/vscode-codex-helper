@@ -1,103 +1,61 @@
 # Codex Helper
 
-像 Claude 的 VS Code 插件那样管理 Codex 会话：**每个会话都是一个编辑器标签页**，可以分栏、拖到任意列、并排对比，布局随你摆；侧边栏只负责在会话之间快速切换。
+**把 Codex 会话变成编辑器标签页。** 分栏、拖拽、并排对比，布局随你摆；活动栏里的会话面板负责搜索、筛选和一键切换。
 
-Codex 官方扩展（`openai.chatgpt`）把会话藏在面板内部，切换要点好几层，也没法把几个会话摆在一起看。这个扩展把会话列表提到活动栏，并让每个会话都开成独立 tab：一个可搜索、可按目录筛选的面板，四个分组，点一下就回到对话，想同时看好几个就拖成多栏。
+> 需要先安装并登录 Codex 官方扩展 [`openai.chatgpt`](https://marketplace.visualstudio.com/items?itemName=openai.chatgpt)，安装本扩展时会自动带上。
 
-## 功能
+## 为什么用它
 
-- **Tab / 面板式管理**：每个会话是普通编辑器标签页，可自由分栏、拖拽、并排对比，布局随时调整；侧边栏那一行只负责打开或聚焦对应标签，不会重复开。
-- **会话面板**：活动栏新增「Codex 会话」视图，按 `置顶` / `最近` / `历史` / `已归档` 四组展示，标题右侧带条数；每行右侧显示相对更新时间（`now` / `5m` / `22d`）。
-- **内嵌搜索**：面板顶部直接输入关键词，按会话名、id 或预览文本即时过滤。
-- **目录筛选**：漏斗按钮列出所有工作目录，可多选；勾选结果按当前 VS Code workspace 记住，重载窗口后自动恢复。
-- **悬停预览**：鼠标停在会话行上，显示前两次和最后一次用户输入，以及模型的最后回复。
-- **新建会话**：标题栏 `+` 优先创建绑定会话；创建失败时回退到空白面板（未绑定会话前不进侧边栏）。
-- **归档与删除**：每行的 `⋯` 或右键菜单里有归档/取消归档；删除只对已归档会话开放（不可恢复），都不弹确认框。
-- **重命名**：通过 `thread/name/set` 写回 Codex，TUI 和官方扩展里同样生效。
-- **置顶**：固定在顶部，状态存在扩展的 `globalState` 里，跨窗口生效。
-- **运行中标识**：正在执行回合的会话显示旋转图标。
-- **分页**：默认拉取最近 50 条，普通列表和已归档分组都可在底部继续「加载更多」。
-- **自动刷新**：标签页变化时只重绘当前视图，不重新拉取列表；可配置定时刷新，侧边栏隐藏时跳过，重新可见后补拉。
-- **错误可见**：加载失败时树里显示带重试的错误节点，而不是装成「没有会话」。
+Codex 官方扩展把会话藏在面板里：切换要点好几层，也没法同时看几个会话。Codex Helper 把会话列表提到活动栏，每个会话开成独立标签页——想并排看就拖成多栏，想切换就点一下。
 
-## 依赖
+## ✨ 功能亮点
 
-需要先安装并登录 Codex 官方扩展 [`openai.chatgpt`](https://marketplace.visualstudio.com/items?itemName=openai.chatgpt)（已声明为 `extensionDependencies`，安装本扩展时会自动带上）。要求 VS Code `^1.96.2`。
+- 🗂️ **会话即标签页**：每个会话都是普通编辑器标签，可分栏、拖拽、并排对比；已打开的会话会直接聚焦，不会重复开。
+- 📋 **分组会话面板**：按「置顶 / 最近 / 历史 / 已归档」分组，显示条数和相对更新时间（`now` / `5m` / `22d`）。
+- 🔍 **标题与内容搜索**：点搜索图标切换范围——「搜标题」即时过滤；「搜内容」会在历史对话的用户输入和模型最终回复中查找。
+- 📁 **按目录筛选**：多选工作目录，筛选结果按 workspace 记住，重载后自动恢复。
+- 👀 **悬停预览**：鼠标停在会话上，显示开头两次和最后一次的提问，以及模型的最后回复。
+- 📌 **置顶、重命名、归档、删除**：右键或行尾 `⋯` 一步完成；重命名会写回 Codex，TUI 和官方扩展里同步生效。
+- ⏳ **运行中标识**：正在执行的会话显示旋转图标。
+- ➕ **快速新建**：标题栏 `+` 新建会话，可自动沿用你上次使用的思考级别。
+- 🔄 **分页与自动刷新**：默认每次加载 50 条，底部可「加载更多」；可选定时刷新，侧边栏隐藏时自动暂停。
 
-## 使用
+## 🚀 快速上手
 
-1. 点击活动栏的 Codex 图标，打开「Codex 会话」视图。
-2. 单击任意会话打开它；点行尾的 `⋯` 或右键可打开、重命名、置顶 / 取消置顶、归档 / 取消归档（删除只出现在已归档条目上）。
-3. 顶部搜索框即时过滤；点击漏斗或已选目录标签可按工作目录筛选；视图标题栏保留新建会话与刷新。
+1. 点击活动栏的 **Codex** 图标，打开「Codex 会话」面板。
+2. 单击会话即可在编辑器标签中打开；拖动标签即可分栏并排。
+3. 右键或点行尾 `⋯`：重命名、置顶、归档；已归档的会话可以删除。
+4. 用顶部搜索框查找会话，点漏斗按工作目录筛选。
 
-## 命令
+所有操作也可以在命令面板（`Ctrl/Cmd+Shift+P`）中输入 `Codex:` 调用。
 
-所有命令都可以在命令面板（`Ctrl/Cmd+Shift+P`）里直接调用。
+## ⚙️ 配置
 
-| 命令 | 标题 | 入口 |
+| 配置项 | 默认值 | 说明 |
 | --- | --- | --- |
-| `codexHelper.newSession` | Codex: 新建会话 | 视图标题栏 `+` |
-| `codexHelper.refresh` | Codex: 刷新会话列表 | 视图标题栏 |
-| `codexHelper.setFilter` | Codex: 过滤会话 | 命令面板 |
-| `codexHelper.clearFilter` | Codex: 清除过滤 | 命令面板 |
-| `codexHelper.openSession` | Codex: 打开会话 | 单击节点 / 右键菜单 |
-| `codexHelper.renameSession` | Codex: 重命名会话 | 右键菜单 |
-| `codexHelper.pinSession` | Codex: 置顶会话 | 右键菜单 |
-| `codexHelper.unpinSession` | Codex: 取消置顶 | 右键菜单（已置顶项） |
-| `codexHelper.archiveSession` | Codex: 归档会话 | 悬停按钮（未归档条目） |
-| `codexHelper.unarchiveSession` | Codex: 取消归档 | 右键菜单（已归档条目） |
-| `codexHelper.deleteSession` | Codex: 删除会话 | 悬停按钮（已归档条目） |
-| `codexHelper.loadMore` | Codex: 加载更多 | 命令面板 |
+| `codexHelper.sessionOpenMode` | `editorTab` | 会话打开方式：`editorTab` 每个会话一个独立标签；`sidebar` 复用 Codex 侧边栏，切换更快。 |
+| `codexHelper.newSessionReasoningEffort` | `remember` | 新建会话的思考级别：`remember` 沿用上次用过的级别，`off` 不干预，或固定为 `minimal` / `low` / `medium` / `high` / `xhigh` / `max`。只作用于该会话，不改全局配置。 |
+| `codexHelper.pageSize` | `50` | 每次加载的会话条数。 |
+| `codexHelper.filterByWorkspaceCwd` | `false` | 只显示当前工作区目录下的会话。 |
+| `codexHelper.autoRefreshSeconds` | `0` | 自动刷新间隔（秒），`0` 为关闭。 |
+| `codexHelper.showRunningIndicator` | `true` | 显示会话运行中图标。 |
+| `codexHelper.runningStaleSeconds` | `300` | macOS / Windows 上判断「运行中」的过期阈值（秒）。 |
+| `codexHelper.runningPollSeconds` | `5` | 文件监听不可用时的兜底轮询间隔（秒），`0` 为关闭。 |
+| `codexHelper.patchCodexNoRetry` | `true` | 关闭 Codex 面板的请求重试，并把启动超时放宽到 120 秒，减少「Codex could not start」。修改前自动备份，重载窗口后生效。 |
+| `codexHelper.codexExecutable` | `""` | `codex` 可执行文件路径；留空时依次使用 Codex 扩展配置和其自带二进制。 |
 
-## 配置
+## ⚠️ 已知限制
 
-| 配置项 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `codexHelper.codexExecutable` | string | `""` | `codex` 可执行文件路径。留空则回退到 Codex 扩展的 `chatgpt.cliExecutable`，再回退到扩展自带二进制。 |
-| `codexHelper.pageSize` | number | `50` | 每次拉取的会话条数。 |
-| `codexHelper.filterByWorkspaceCwd` | boolean | `false` | 只列出当前工作区目录下的会话。 |
-| `codexHelper.autoRefreshSeconds` | number | `0` | 自动刷新间隔（秒），`0` 表示关闭。 |
-| `codexHelper.showRunningIndicator` | boolean | `true` | 显示运行中图标并监听 rollout 文件。 |
-| `codexHelper.runningStaleSeconds` | number | `300` | 运行状态过期阈值（秒），仅用于 macOS / Windows。 |
-| `codexHelper.runningPollSeconds` | number | `5` | 文件监听不可用时的兜底轮询间隔（秒），`0` 表示关闭。 |
-| `codexHelper.newSessionReasoningEffort` | string | `"remember"` | 新建会话用哪个思考级别：`remember` 跟随你上次真正用过的级别，`off` 不干预，其余取值（`minimal`/`low`/`medium`/`high`/`xhigh`/`max`）固定用该级别。级别通过 `thread/settings/update` 写在新建会话自己身上（`threads.reasoning_effort`），不改全局配置；写不进去时只是这个会话没有默认档，不影响新建。 |
+- **置顶只存在本地**：保存在本扩展中，不会同步到 TUI 或其他机器。
+- **归档 / 删除需要会话空闲**：若 Codex 正占用该会话，会提示 `already has an active writer`，可在 Codex 中操作或重载窗口后重试。重命名不受影响。
+- **新会话稍后出现**：空会话在发送第一条消息前不会出现在列表中。
+- **标题修正会重载面板**：点击会话触发标题修正时，未发送的草稿和滚动位置会丢失（对话内容不丢）。
+- **运行判定**：macOS / Windows 上按最近写入时间近似判断，超长回合可能显示为未运行。
+- **平台**：使用 Codex 自带二进制时仅支持 `x64` / `arm64`，其他平台请设置 `codexHelper.codexExecutable`。
 
-## 工作原理
+## 🔧 工作原理
 
-扩展以 stdio 启动 `codex app-server`，走 NDJSON JSON-RPC 读写会话：列表与状态用 `thread/list`、`thread/loaded/list`、`thread/turns/list`，改名 / 归档 / 删除用对应的 `thread/*` 方法。打开会话时构造 Codex 内部的会话 URI 交给 `chatgpt.conversationEditor`；由于 Codex 不允许同一文档开多个编辑器，已开标签会被聚焦而不是重复打开。运行状态由「最新回合未终止」且「rollout 文件被存活的 app-server 进程持有」共同判定（Linux 走 `/proc` 归属扫描，macOS / Windows 退化为时间近似）。
-
-## 已知限制
-
-- 置顶存在本扩展的 `globalState`：协议里没有可写槽位，不会同步到 TUI 或其他机器。
-- 归档 / 取消归档 / 删除需要独占该会话：Codex 的 app-server 还持有它时会报 `already has an active writer`，点击前会先预检并给出说明。出路是用 Codex 自己的入口，或 Reload Window 后重试。重命名不受影响。
-- 「新建会话」优先创建绑定会话，会多起一个一次性的 `codex app-server` 子进程（约 1 秒）并依赖一条实测的调用顺序；失败会自动回退成空白面板（不报错）。
-- 标题修正（点条目时的「关掉重开」）会重载一次面板，**未发送的草稿和滚动位置会丢**（会话内容不丢），且只在点击时触发。
-- 空会话在发出第一条消息前不进 `thread/list`，因此 `+` 之后的行要等一会儿才出现。
-- macOS / Windows 上的运行判定只是时间近似：超过 `runningStaleSeconds` 无写入的长回合会被显示为非运行中。
-- 回退到 Codex 自带二进制时只支持 `x64` / `arm64`；其他平台请用 `codexHelper.codexExecutable` 显式指定路径。
-
-## 开发
-
-```bash
-pnpm install
-pnpm build       # esbuild 打包到 dist/extension.js 与 dist/webview/（侧边栏脚本和样式）
-pnpm test        # vitest 单元测试
-pnpm typecheck   # tsc --noEmit：扩展宿主 + src/ui/webview（独立的 DOM tsconfig）
-```
-
-按 `F5` 启动扩展开发宿主。
-
-### 发版
-
-版本号的唯一来源是 `package.json` 的 `version`，发版只改这一处：
-
-```bash
-pnpm version patch        # 或 minor / major：改 package.json 并打 tag
-pnpm package              # vsce 先经 vscode:prepublish 跑 pnpm build，再打包到 releases/
-code --install-extension releases/vscode-codex-helper-<version>.vsix
-```
-
-`pnpm package` 实际执行的是 `pnpm dlx --allow-build=@vscode/vsce-sign @vscode/vsce package --out releases/`（pnpm 10+ 默认拦下依赖的 postinstall，@vscode/vsce-sign 需要显式放行）。`releases/` 不进 git，也不会被打进 vsix。
+扩展以 stdio 启动 `codex app-server`，通过 JSON-RPC 读取和修改会话（`thread/list`、`thread/name/set` 等），打开会话时把 Codex 内部的会话 URI 交给官方扩展的编辑器显示。Linux 上通过 `/proc` 判断 rollout 文件是否被活跃进程持有来识别「运行中」。
 
 ## 许可
 
